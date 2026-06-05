@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Frontend (not needed in backend container)
+frontend/
+node_modules/
+dist/
+public/
+index.html
+vite.config.ts
+tsconfig.json
+package.json
+package-lock.json
+
+# Runtime data (mounted as volume)
+local_data/
+
+# Secrets / env
+.env
+.env.dev
+.env.prod
+
+# Dev artifacts
+.git/
+.claude/
+.cursor/
+.firebase/
+.playwright-mcp/
+scripts/
+tests/
+docs/
+*.md
+*.log
+*.png
+*.pdf

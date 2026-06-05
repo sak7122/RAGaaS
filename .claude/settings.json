@@ -1,0 +1,66 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      }
+    },
+    "firebase": {
+      "command": "npx",
+      "args": ["-y", "firebase-tools@latest", "experimental:mcp"],
+      "env": {
+        "FIREBASE_TOKEN": "${FIREBASE_TOKEN}"
+      }
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"]
+    },
+    "cloudrun": {
+      "command": "npx",
+      "args": ["-y", "@google-cloud/cloud-run-mcp"],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS}",
+        "GCP_PROJECT_ID": "${GCP_PROJECT_ID}"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "E:\\ORACLE_2\\RAGaaS"]
+    },
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest*)",
+      "Bash(uvicorn*)",
+      "Bash(firebase emulators*)",
+      "Bash(npm run*)",
+      "Bash(curl *)",
+      "PowerShell(python -m pytest*)",
+      "PowerShell(uvicorn*)",
+      "PowerShell(firebase *)",
+      "PowerShell(npm run*)",
+      "PowerShell(npm install*)",
+      "PowerShell(gcloud *)",
+      "PowerShell(node *)",
+      "PowerShell(npx *)",
+      "PowerShell(.venv\\Scripts\\python*)",
+      "PowerShell(.venv\\Scripts\\uvicorn*)",
+      "PowerShell(.\\scripts\\*)",
+      "PowerShell(Invoke-RestMethod http://127.0.0.1*)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(java *)"
+    ]
+  }
+}

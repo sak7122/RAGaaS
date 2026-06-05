@@ -1,0 +1,28 @@
+services:
+  backend:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "8000:8000"
+    environment:
+      RAGAAS_ENV: development
+      FIREBASE_PROJECT_ID: ragaas-local
+      # Reach Firebase emulators running on the host machine
+      FIREBASE_AUTH_EMULATOR_HOST: host.docker.internal:9099
+      FIRESTORE_EMULATOR_HOST: host.docker.internal:8080
+    volumes:
+      # Live-reload: mount source so --reload picks up changes
+      - ./backend:/app/backend
+      # Persist uploaded PDFs and index outside the container
+      - ./local_data:/app/local_data
+    extra_hosts:
+      # Linux needs this to resolve host.docker.internal
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

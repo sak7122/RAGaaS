@@ -1,0 +1,72 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    name: Deploy backend → Cloud Run
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write  # for Workload Identity Federation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ragaas-backend \
+            --source . \
+            --region us-central1 \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 10 \
+            --set-env-vars "RAGAAS_ENV=production,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},CORS_ORIGIN_REGEX=${{ secrets.CORS_ORIGIN_REGEX }}"
+
+  deploy-frontend:
+    name: Deploy frontend → Firebase Hosting
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install + Build
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_FIREBASE_USE_EMULATOR: "false"
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId: live
+          projectId: ${{ secrets.FIREBASE_PROJECT_ID }}
