@@ -110,13 +110,25 @@ def load_index() -> dict:
     try:
         return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        log.error("index.json unreadable (%s), starting with empty index", exc)
+        # Rename corrupt file before returning empty so a subsequent save_index
+        # doesn't silently overwrite it with a single-document list (data loss).
+        backup = INDEX_FILE.with_name(
+            f"index.corrupt.{int(datetime.now(timezone.utc).timestamp())}.json"
+        )
+        try:
+            INDEX_FILE.rename(backup)
+            log.error("index.json corrupt (%s) — preserved as %s, starting fresh", exc, backup.name)
+        except OSError as rename_err:
+            log.error("index.json corrupt (%s) and could not be preserved: %s", exc, rename_err)
         return {"documents": []}
 
 
 def save_index(index: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    INDEX_FILE.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    # Write to a temp file then atomically rename to prevent partial-write corruption.
+    tmp = INDEX_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    tmp.replace(INDEX_FILE)
 
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
@@ -265,10 +277,8 @@ async def upload_document(
     disk_path = (tenant_dir / file_name).resolve()
     assert_safe_path(disk_path, tenant_dir)
 
-    disk_path.write_bytes(content)
-
-    # Sec fix #5: wrap PDF parsing, use chunks instead of raw pages
     try:
+        disk_path.write_bytes(content)
         chunks = extract_chunks(content)
 
         index = load_index()
@@ -287,9 +297,13 @@ async def upload_document(
     except HTTPException:
         disk_path.unlink(missing_ok=True)
         raise
+    except OSError as exc:
+        disk_path.unlink(missing_ok=True)
+        log.error("upload I/O error: %s", exc)
+        raise HTTPException(status_code=500, detail="Storage error — could not save file") from exc
     except Exception as exc:
         disk_path.unlink(missing_ok=True)
-        log.error("upload failed after write, file cleaned up: %s", exc)
+        log.error("upload failed, file cleaned up: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to index document") from exc
 
     log.info("upload tenant=%s file=%s chunks=%d", tenant_id, file_name, len(chunks))

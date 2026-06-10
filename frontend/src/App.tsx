@@ -59,6 +59,7 @@ function App() {
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [refreshing, setRefreshing]   = useState(false);
+  const [authEpoch, setAuthEpoch]     = useState(0);
   const tokenRef                      = useRef("");
 
   function authHeaders(): Record<string, string> {
@@ -72,6 +73,10 @@ function App() {
     setAuthState("Session expired — please sign in again");
     setStatus(null);
     setDocs([]);
+    setMessages([]);
+    setQuestion("");
+    // In emulator mode, bump the epoch so the auth useEffect re-fires and re-signs-in.
+    if (USE_EMULATOR) setAuthEpoch((e) => e + 1);
   }
 
   const refreshStatus = useCallback(async () => {
@@ -82,7 +87,8 @@ function App() {
         fetch(`${API}/api/tenant/status`, { headers: authHeaders() }),
         fetch(`${API}/api/documents`,     { headers: authHeaders() }),
       ]);
-      if (statusRes.status === 401 || statusRes.status === 403) {
+      if (statusRes.status === 401 || statusRes.status === 403 ||
+          docsRes.status  === 401 || docsRes.status  === 403) {
         handleSessionExpired();
         return;
       }
@@ -102,7 +108,8 @@ function App() {
       const result = await new Promise<{ ok: boolean; body: Record<string, unknown> }>((resolve) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${API}/api/upload`);
-        xhr.setRequestHeader("Authorization", `Bearer ${tokenRef.current}`);
+        const hdrs = authHeaders();
+        Object.entries(hdrs).forEach(([k, v]) => xhr.setRequestHeader(k, v));
 
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
@@ -111,6 +118,11 @@ function App() {
         };
 
         xhr.onload = () => {
+          if (xhr.status === 401 || xhr.status === 403) {
+            handleSessionExpired();
+            resolve({ ok: false, body: { detail: "Session expired — please sign in again" } });
+            return;
+          }
           try {
             resolve({ ok: xhr.status < 300, body: JSON.parse(xhr.responseText) });
           } catch {
@@ -141,11 +153,16 @@ function App() {
         method: "DELETE",
         headers: authHeaders(),
       });
+      if (res.status === 401 || res.status === 403) {
+        handleSessionExpired();
+        return;
+      }
       if (res.ok) {
         setDocs((prev) => prev.filter((d) => d.file_name !== fileName));
-        refreshStatus();
       }
-    } catch { /* ignore */ } finally {
+      // Always refresh so the list reflects true backend state on success or error.
+      refreshStatus();
+    } catch { /* network error — next refresh will sync */ } finally {
       setDeleting(null);
     }
   }
@@ -217,7 +234,7 @@ function App() {
       });
 
     return () => { live = false; };
-  }, [tenantEmail]);
+  }, [tenantEmail, authEpoch]);
 
   // ── Auth: prod mode (form sign-in, handled by AuthForm) ────────────────
   const handleProdAuth = useCallback(async (email: string, password: string, isNew: boolean) => {
@@ -268,6 +285,7 @@ function App() {
           tenants={USE_EMULATOR ? DEV_TENANTS : []}
           tenantEmail={tenantEmail}
           onTenantChange={(email) => {
+            if (upload.type === "uploading") return;
             setTenantEmail(email);
             setMessages(loadChatHistory(email));
             setUpload({ msg: "", type: "idle", progress: 0 });

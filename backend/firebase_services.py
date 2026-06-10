@@ -126,7 +126,12 @@ def tenant_from_claims(decoded: dict) -> str:
     email = decoded.get("email")
     if isinstance(email, str) and email in TENANT_EMAIL_MAP:
         return TENANT_EMAIL_MAP[email]
-    return "tenant-demo"
+    if os.getenv("RAGAAS_ENV", "development") == "development":
+        return "tenant-demo"
+    raise HTTPException(
+        status_code=403,
+        detail="No tenant assigned to this account — contact your administrator",
+    )
 
 
 def verify_firebase_token(id_token: str) -> Principal:
