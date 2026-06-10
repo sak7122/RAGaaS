@@ -18,6 +18,7 @@ interface SidebarProps {
   authState: string;
   online: boolean;
   onRefresh: () => void;
+  refreshing?: boolean;
   extraSlot?: ReactNode;
 }
 
@@ -39,6 +40,7 @@ export function Sidebar({
   authState,
   online,
   onRefresh,
+  refreshing = false,
   extraSlot,
 }: SidebarProps) {
   const dotClass = online ? "" : authState === "Signing in…" ? "pending" : "offline";
@@ -94,9 +96,9 @@ export function Sidebar({
       {extraSlot}
 
       <div style={{ marginTop: "auto" }}>
-        <button type="button" className="btn-utility" onClick={onRefresh}>
-          <RefreshCcw size={14} />
-          Refresh status
+        <button type="button" className="btn-utility" onClick={onRefresh} disabled={refreshing}>
+          <RefreshCcw size={14} className={refreshing ? "spin" : ""} />
+          {refreshing ? "Refreshing…" : "Refresh status"}
         </button>
       </div>
     </aside>

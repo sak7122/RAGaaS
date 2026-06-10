@@ -107,7 +107,11 @@ def principal_from_auth(authorization: Annotated[str | None, Header()] = None) -
 def load_index() -> dict:
     if not INDEX_FILE.exists():
         return {"documents": []}
-    return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+    try:
+        return json.loads(INDEX_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        log.error("index.json unreadable (%s), starting with empty index", exc)
+        return {"documents": []}
 
 
 def save_index(index: dict) -> None:
@@ -153,10 +157,13 @@ def extract_chunks(content: bytes) -> list[dict]:
             page_text = (page.extract_text() or "").strip()
             for idx, chunk in enumerate(chunk_text(page_text)):
                 result.append({"page": page_num, "chunk_index": idx, "text": chunk})
-        return result or [{"page": 1, "chunk_index": 0, "text": ""}]
     except Exception as exc:
         log.warning("PDF parse failed: %s", exc)
         raise HTTPException(status_code=400, detail="Could not parse PDF — file may be corrupted or encrypted")
+    non_empty = [c for c in result if c["text"].strip()]
+    if not non_empty:
+        raise HTTPException(status_code=400, detail="PDF contains no extractable text")
+    return non_empty
 
 
 def tokenize(text: str) -> set[str]:
@@ -261,21 +268,30 @@ async def upload_document(
     disk_path.write_bytes(content)
 
     # Sec fix #5: wrap PDF parsing, use chunks instead of raw pages
-    chunks = extract_chunks(content)
+    try:
+        chunks = extract_chunks(content)
 
-    index = load_index()
-    index["documents"] = [
-        d for d in index["documents"]
-        if not (d["tenant_id"] == tenant_id and d["file_name"] == file_name)
-    ]
-    index["documents"].append({
-        "tenant_id": tenant_id,
-        "file_name": file_name,
-        "path": str(disk_path),
-        "chunks": chunks,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-    })
-    save_index(index)
+        index = load_index()
+        index["documents"] = [
+            d for d in index["documents"]
+            if not (d["tenant_id"] == tenant_id and d["file_name"] == file_name)
+        ]
+        index["documents"].append({
+            "tenant_id": tenant_id,
+            "file_name": file_name,
+            "path": str(disk_path),
+            "chunks": chunks,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        })
+        save_index(index)
+    except HTTPException:
+        disk_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        disk_path.unlink(missing_ok=True)
+        log.error("upload failed after write, file cleaned up: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to index document") from exc
+
     log.info("upload tenant=%s file=%s chunks=%d", tenant_id, file_name, len(chunks))
     return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks)}
 

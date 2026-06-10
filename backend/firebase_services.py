@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol
@@ -8,6 +10,8 @@ from typing import Protocol
 import firebase_admin
 from fastapi import HTTPException
 from firebase_admin import auth, credentials, firestore
+
+log = logging.getLogger("ragaas")
 
 QUERY_LIMIT = 1000
 TENANT_EMAIL_MAP = {
@@ -33,19 +37,23 @@ class UsageStore(Protocol):
 class MemoryUsageStore:
     def __init__(self) -> None:
         self.counts: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def get_count(self, tenant_id: str) -> int:
-        return self.counts.get(tenant_id, 0)
+        with self._lock:
+            return self.counts.get(tenant_id, 0)
 
     def increment_or_reject(self, tenant_id: str) -> int:
-        current = self.get_count(tenant_id)
-        if current >= QUERY_LIMIT:
-            raise HTTPException(status_code=429, detail="Tenant query quota exceeded")
-        self.counts[tenant_id] = current + 1
-        return self.counts[tenant_id]
+        with self._lock:
+            current = self.counts.get(tenant_id, 0)
+            if current >= QUERY_LIMIT:
+                raise HTTPException(status_code=429, detail="Tenant query quota exceeded")
+            self.counts[tenant_id] = current + 1
+            return self.counts[tenant_id]
 
     def reset(self) -> None:
-        self.counts.clear()
+        with self._lock:
+            self.counts.clear()
 
 
 class FirestoreUsageStore:
@@ -106,7 +114,8 @@ def create_usage_store() -> UsageStore:
     try:
         init_firebase()
         return FirestoreUsageStore()
-    except Exception:
+    except Exception as exc:
+        log.warning("Firebase unavailable (%s: %s), falling back to MemoryUsageStore — quota will not persist across restarts", type(exc).__name__, exc)
         return MemoryUsageStore()
 
 
@@ -117,11 +126,6 @@ def tenant_from_claims(decoded: dict) -> str:
     email = decoded.get("email")
     if isinstance(email, str) and email in TENANT_EMAIL_MAP:
         return TENANT_EMAIL_MAP[email]
-    uid = str(decoded.get("uid") or decoded.get("sub") or "")
-    if "tenant-a" in uid:
-        return "tenant-a"
-    if "tenant-b" in uid:
-        return "tenant-b"
     return "tenant-demo"
 
 

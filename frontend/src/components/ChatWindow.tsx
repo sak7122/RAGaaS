@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef } from "react";
 import { Send, MessageSquare } from "lucide-react";
 
-export type Citation = { file_name: string; page: number; excerpt: string };
+export type Citation = { file_name: string; chunk_index: number; excerpt: string };
 export type ChatMessage = {
   role: "user" | "assistant";
   text: string;
@@ -20,7 +20,7 @@ interface ChatWindowProps {
 function CitationItem({ c }: { c: Citation }) {
   return (
     <div className="citation">
-      <span className="citation-meta">{c.file_name} p.{c.page}</span>
+      <span className="citation-meta">{c.file_name} chunk {c.chunk_index}</span>
       <span className="citation-excerpt">{c.excerpt}</span>
     </div>
   );
@@ -33,7 +33,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       {msg.citations && msg.citations.length > 0 && (
         <div className="citations">
           {msg.citations.map((c) => (
-            <CitationItem key={`${c.file_name}-${c.page}`} c={c} />
+            <CitationItem key={`${c.file_name}-${c.chunk_index}`} c={c} />
           ))}
         </div>
       )}

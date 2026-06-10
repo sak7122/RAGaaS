@@ -58,22 +58,39 @@ function App() {
   const [upload, setUpload]           = useState<UploadState>({ msg: "", type: "idle", progress: 0 });
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
+  const [refreshing, setRefreshing]   = useState(false);
   const tokenRef                      = useRef("");
 
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
   }
 
+  function handleSessionExpired() {
+    tokenRef.current = "";
+    setIdToken("");
+    setOnline(false);
+    setAuthState("Session expired — please sign in again");
+    setStatus(null);
+    setDocs([]);
+  }
+
   const refreshStatus = useCallback(async () => {
     if (!tokenRef.current) return;
+    setRefreshing(true);
     try {
       const [statusRes, docsRes] = await Promise.all([
         fetch(`${API}/api/tenant/status`, { headers: authHeaders() }),
         fetch(`${API}/api/documents`,     { headers: authHeaders() }),
       ]);
+      if (statusRes.status === 401 || statusRes.status === 403) {
+        handleSessionExpired();
+        return;
+      }
       if (statusRes.ok) setStatus(await statusRes.json());
       if (docsRes.ok)   setDocs(await docsRes.json());
-    } catch { /* backend may be starting */ }
+    } catch { /* backend may be starting */ } finally {
+      setRefreshing(false);
+    }
   }, []);
 
   async function handleUpload(file: File) {
@@ -147,6 +164,10 @@ function App() {
         headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
       });
+      if (res.status === 401 || res.status === 403) {
+        handleSessionExpired();
+        return;
+      }
       const body = await res.json();
       const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
       const updated: ChatMessage[] = [
@@ -255,6 +276,7 @@ function App() {
           authState={authState}
           online={online}
           onRefresh={refreshStatus}
+          refreshing={refreshing}
           extraSlot={
             <DocumentList docs={docs} onDelete={handleDelete} deleting={deleting} />
           }
