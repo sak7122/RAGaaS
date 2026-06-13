@@ -67,6 +67,20 @@ Without this it's a UI demo. Cheapest path that fits current stack: **Firestore 
 
 **Effort:** ~M. **Exit:** chat answers from real document content with real citations.
 
+### 1.5 Prod operational step — Firestore vector index (required)
+`find_nearest` needs a vector index on the chunk embedding field. Create once per project:
+```bash
+gcloud firestore indexes composite create \
+  --collection-group=chunks --query-scope=COLLECTION \
+  --field-config=field-path=embedding,vector-config='{"dimension":768,"flat":{}}' \
+  --project=snappy-mapper-498223-b2
+```
+(768 = text-embedding-005 dims.) Until this exists, prod chat falls back to keyword scan.
+
+**Status: code shipped.** Dev path (LocalEmbedder + MockGenerator) works offline. Prod path
+(Vertex embeddings + Gemini Flash-Lite, keyless ADC) activates when `RAGAAS_ENV=production`
+and `google-genai` is installed — set `GEMINI_MODEL` / `EMBED_MODEL` / `VERTEX_LOCATION` as needed.
+
 ---
 
 ## Phase 2 — Trust & UX (makes it premium)
