@@ -142,12 +142,27 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # --- 3b. Deploy backend to Cloud Run ---
+      # --- 3b. Build + push image ourselves (avoids Cloud Build / compute SA) ---
+      # `gcloud run deploy --source` delegates the build to Cloud Build running as
+      # the Compute default SA, which lacks access to the source-staging bucket.
+      # Building here with the deployer SA (has artifactregistry.admin) sidesteps that.
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push backend image
+        id: build
+        run: |
+          IMAGE="us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ragaas/backend:${{ github.sha }}"
+          docker build --target prod -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # --- 3c. Deploy the pushed image to Cloud Run ---
       - name: Deploy backend → Cloud Run
         id: deploy-backend
         run: |
           URL=$(gcloud run deploy ragaas-backend \
-            --source . \
+            --image "${{ steps.build.outputs.image }}" \
             --region us-central1 \
             --project "${{ secrets.GCP_PROJECT_ID }}" \
             --allow-unauthenticated \
@@ -156,6 +171,7 @@ jobs:
             --memory 512Mi \
             --cpu 1 \
             --timeout 60 \
+            --port 8000 \
             --set-env-vars "\
           RAGAAS_ENV=production,\
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},\
