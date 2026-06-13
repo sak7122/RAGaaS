@@ -1,7 +1,6 @@
 variable "project_id" { type = string }
 variable "region" { type = string }
 variable "pdf_bucket_name" { type = string }
-variable "tf_state_bucket" { type = string }
 variable "runtime_sa_email" { type = string }
 variable "firebase_domain" { type = string }
 
@@ -54,20 +53,9 @@ resource "google_storage_bucket_iam_member" "runtime_pdf_access" {
   member = "serviceAccount:${var.runtime_sa_email}"
 }
 
-# ── Terraform state bucket (already exists before tf init — imported) ─────────
-# Run before first terraform init:
-#   gcloud storage buckets create gs://<tf_state_bucket> \
-#     --project=<project_id> --location=<region> --uniform-bucket-level-access
-# Then import: terraform import module.storage.google_storage_bucket.tf_state <tf_state_bucket>
-resource "google_storage_bucket" "tf_state" {
-  project       = var.project_id
-  name          = var.tf_state_bucket
-  location      = var.region
-  force_destroy = false
-
-  uniform_bucket_level_access = true
-
-  versioning {
-    enabled = true
-  }
-}
+# ── Terraform state bucket ────────────────────────────────────────────────────
+# Deliberately NOT managed here. It is created out-of-band by
+# scripts/bootstrap_tf_state.ps1 BEFORE the first `terraform init`, because the
+# bucket must exist before Terraform can store its own state in it. Managing it
+# here would risk a `terraform destroy` deleting the very state it depends on.
+# var.tf_state_bucket is kept for documentation/reference only.

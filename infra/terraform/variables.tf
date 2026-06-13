@@ -28,11 +28,9 @@ variable "gcs_pdf_bucket" {
   default     = "genaiacademy-ragaas-pdfs"
 }
 
-variable "tf_state_bucket" {
-  type        = string
-  description = "GCS bucket that holds Terraform remote state (created before terraform init)"
-  default     = "ragaas-tf-state"
-}
+# NOTE: the Terraform state bucket is created by scripts/bootstrap_tf_state.ps1
+# (out-of-band, before `terraform init`) and is intentionally not a variable or
+# managed resource — see modules/storage/main.tf.
 
 variable "cors_origin_regex" {
   type        = string

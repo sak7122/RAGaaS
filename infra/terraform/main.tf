@@ -52,7 +52,6 @@ module "storage" {
   project_id       = var.project_id
   region           = var.region
   pdf_bucket_name  = var.gcs_pdf_bucket
-  tf_state_bucket  = var.tf_state_bucket
   runtime_sa_email = module.iam.runtime_sa_email
   firebase_domain  = "${var.firebase_project_id}.web.app"
   depends_on       = [module.apis]
