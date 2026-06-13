@@ -1,0 +1,195 @@
+###############################################################################
+# RAGaaS — CI/CD Pipeline
+#
+# Stages:
+#   1. build  — type-check, compile, docker image verify (every push, every branch)
+#   2. test   — pytest backend tests                      (every push, every branch)
+#   3. deploy — Cloud Run + Firebase Hosting              (MANUAL ONLY via Actions UI)
+#
+# Required GitHub Secrets (Settings → Secrets and variables → Actions):
+#
+#   GCP auth (Workload Identity Federation — keyless, no JSON key):
+#     GCP_WORKLOAD_IDENTITY_PROVIDER
+#     GCP_SERVICE_ACCOUNT
+#
+#   Backend (Cloud Run env vars):
+#     GCP_PROJECT_ID          ragaas-af876
+#     FIREBASE_PROJECT_ID     ragaas-af876
+#     GCS_BUCKET              genaiacademy-ragaas-pdfs
+#     CORS_ORIGIN_REGEX       https://ragaas-af876\.web\.app
+#
+#   Frontend (Vite build-time):
+#     VITE_FIREBASE_API_KEY       Firebase console → Project settings → Web app
+#     VITE_FIREBASE_AUTH_DOMAIN   ragaas-af876.firebaseapp.com
+#     VITE_FIREBASE_APP_ID        Firebase console → Web app App ID
+#
+#   Firebase Hosting:
+#     FIREBASE_SERVICE_ACCOUNT    firebase login:ci output (JSON)
+#
+# To deploy: Actions tab → Pipeline → Run workflow → Run
+###############################################################################
+
+name: Pipeline
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual deploy'
+        required: false
+        default: ''
+
+jobs:
+  # ── Stage 1: Build ────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Frontend: type-check + verify it compiles
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npm run type-check
+
+      - name: Frontend build (CI placeholders)
+        run: npm run build
+        env:
+          VITE_FIREBASE_USE_EMULATOR: "false"
+          VITE_API_URL:               https://ci-placeholder.run.app
+          VITE_FIREBASE_PROJECT_ID:   ci-placeholder
+          VITE_FIREBASE_API_KEY:      ci-placeholder
+          VITE_FIREBASE_AUTH_DOMAIN:  ci-placeholder.firebaseapp.com
+          VITE_FIREBASE_APP_ID:       "1:000:web:ci"
+
+      # Docker: verify image builds for both targets
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker build — dev image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: dev
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker build — prod image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          target: prod
+          push: false
+          cache-from: type=gha
+
+  # ── Stage 2: Test ─────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: pytest
+        run: python -m pytest tests/ -v --tb=short
+        env:
+          RAGAAS_USE_MEMORY_STORE: "1"
+          RAGAAS_ENV: development
+
+  # ── Stage 3: Deploy (MANUAL ONLY) ────────────────────────────────────────
+  deploy:
+    name: Deploy → Production
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    permissions:
+      contents: read
+      id-token: write   # required for Workload Identity Federation
+
+    outputs:
+      cloud_run_url: ${{ steps.deploy-backend.outputs.url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- 3a. Authenticate to GCP via WIF ---
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # --- 3b. Deploy backend to Cloud Run ---
+      - name: Deploy backend → Cloud Run
+        id: deploy-backend
+        run: |
+          URL=$(gcloud run deploy ragaas-backend \
+            --source . \
+            --region us-central1 \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 10 \
+            --memory 512Mi \
+            --cpu 1 \
+            --timeout 60 \
+            --set-env-vars "\
+          RAGAAS_ENV=production,\
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},\
+          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},\
+          GCS_BUCKET=${{ secrets.GCS_BUCKET }},\
+          CORS_ORIGIN_REGEX=${{ secrets.CORS_ORIGIN_REGEX }}" \
+            --format "value(status.url)")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Backend deployed to: $URL"
+
+      # --- 3c. Build frontend with real Cloud Run URL ---
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Frontend build (production)
+        run: npm run build
+        env:
+          VITE_FIREBASE_USE_EMULATOR: "false"
+          VITE_API_URL:               ${{ steps.deploy-backend.outputs.url }}
+          VITE_FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_API_KEY:      ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      # --- 3d. Deploy frontend to Firebase Hosting ---
+      - name: Deploy frontend → Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken:              ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId:              live
+          projectId:              ${{ secrets.FIREBASE_PROJECT_ID }}
