@@ -14,7 +14,16 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 from backend.config import config
-from backend.firebase_services import Principal, QUERY_LIMIT, create_usage_store, verify_firebase_token
+from backend.firebase_services import (
+    MemberRecord,
+    Principal,
+    QUERY_LIMIT,
+    create_member_store,
+    create_usage_store,
+    verify_firebase_token,
+)
+from backend.storage import create_storage_backend
+from backend.index_store import create_index_store
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -25,21 +34,21 @@ logging.basicConfig(
 log = logging.getLogger("ragaas")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-DATA_DIR = Path("local_data")
-UPLOAD_DIR = DATA_DIR / "uploads"
-INDEX_FILE = DATA_DIR / "index.json"
+DATA_DIR       = Path("local_data")
+UPLOAD_DIR     = DATA_DIR / "uploads"
+INDEX_FILE     = DATA_DIR / "index.json"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-PDF_MAGIC = b"%PDF"
+PDF_MAGIC      = b"%PDF"
+VALID_ROLES    = {"admin", "uploader", "viewer"}
 
-# Dev-only mock tokens — empty in production (sec fix #1)
+# Dev-only mock tokens — empty dict in production
 TOKEN_TENANT_MAP: dict[str, str] = (
     {
         "mock-tenant-token-abc": "tenant-demo",
-        "tenant-a-token": "tenant-a",
-        "tenant-b-token": "tenant-b",
+        "tenant-a-token":        "tenant-a",
+        "tenant-b-token":        "tenant-b",
     }
-    if config.env == "development"
-    else {}
+    if config.env == "development" else {}
 )
 
 if config.env == "development":
@@ -56,7 +65,10 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-usage_store = create_usage_store()
+usage_store   = create_usage_store()
+member_store  = create_member_store()
+storage       = create_storage_backend(config.env, UPLOAD_DIR, config.gcs_bucket)
+index_store   = create_index_store(config.env, INDEX_FILE)
 log.info("startup env=%s emulator=%s", config.env, config.use_emulator)
 
 
@@ -67,6 +79,7 @@ class ChatRequest(BaseModel):
 
 class Citation(BaseModel):
     file_name: str
+    page: int
     chunk_index: int
     excerpt: str
 
@@ -92,18 +105,44 @@ class DocumentMeta(BaseModel):
     uploaded_at: str
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+class MemberOut(BaseModel):
+    uid: str
+    email: str
+    role: str
+    invited_at: str
+    joined_at: str | None
+
+
+class InviteRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    role: str = Field(default="viewer")
+
+
+class RoleRequest(BaseModel):
+    role: str
+
+
+# ── Auth & role guards ────────────────────────────────────────────────────────
 def principal_from_auth(authorization: Annotated[str | None, Header()] = None) -> Principal:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     tenant_id = TOKEN_TENANT_MAP.get(token)
     if tenant_id:
-        return Principal(uid=f"dev-{tenant_id}", tenant_id=tenant_id)
-    return verify_firebase_token(token)
+        # Dev mock tokens always get admin so all endpoints are testable
+        return Principal(uid=f"dev-{tenant_id}", tenant_id=tenant_id, role="admin")
+    return verify_firebase_token(token, member_store)
 
 
-# ── Index helpers ─────────────────────────────────────────────────────────────
+def require_role(principal: Principal, *roles: str) -> None:
+    if principal.role not in roles:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{principal.role}' cannot perform this action. Required: {list(roles)}",
+        )
+
+
+# load_index / save_index kept for test compatibility only (dev local store)
 def load_index() -> dict:
     if not INDEX_FILE.exists():
         return {"documents": []}
@@ -122,7 +161,6 @@ def safe_filename(name: str) -> str:
 
 
 def assert_safe_path(resolved: Path, base: Path) -> None:
-    """Sec fix #3: prevent path traversal."""
     try:
         resolved.relative_to(base.resolve())
     except ValueError:
@@ -130,7 +168,6 @@ def assert_safe_path(resolved: Path, base: Path) -> None:
 
 
 def chunk_text(text: str, chunk_size: int = 512) -> list[str]:
-    """Split text into ~chunk_size character chunks at word boundaries."""
     words = text.split()
     chunks, current, length = [], [], 0
     for word in words:
@@ -145,7 +182,6 @@ def chunk_text(text: str, chunk_size: int = 512) -> list[str]:
 
 
 def extract_chunks(content: bytes) -> list[dict]:
-    """Parse PDF bytes → list of {page, chunk_index, text} dicts."""
     try:
         reader = PdfReader(io.BytesIO(content))
         result = []
@@ -156,7 +192,10 @@ def extract_chunks(content: bytes) -> list[dict]:
         return result or [{"page": 1, "chunk_index": 0, "text": ""}]
     except Exception as exc:
         log.warning("PDF parse failed: %s", exc)
-        raise HTTPException(status_code=400, detail="Could not parse PDF — file may be corrupted or encrypted")
+        raise HTTPException(
+            status_code=400,
+            detail="Could not parse PDF — file may be corrupted or encrypted",
+        )
 
 
 def tokenize(text: str) -> set[str]:
@@ -167,16 +206,17 @@ def enforce_quota(tenant_id: str) -> int:
     return usage_store.increment_or_reject(tenant_id)
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Routes: health ────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "env": config.env, "time": datetime.now(timezone.utc).isoformat()}
 
 
+# ── Routes: tenant status ─────────────────────────────────────────────────────
 @app.get("/api/tenant/status", response_model=TenantStatus)
 def tenant_status(principal: Annotated[Principal, Depends(principal_from_auth)]) -> TenantStatus:
     tenant_id = principal.tenant_id
-    docs = [d for d in load_index()["documents"] if d["tenant_id"] == tenant_id]
+    docs = index_store.list_docs(tenant_id)
     return TenantStatus(
         tenant_id=tenant_id,
         queries_used=usage_store.get_count(tenant_id),
@@ -185,10 +225,10 @@ def tenant_status(principal: Annotated[Principal, Depends(principal_from_auth)])
     )
 
 
+# ── Routes: documents ─────────────────────────────────────────────────────────
 @app.get("/api/documents", response_model=list[DocumentMeta])
 def list_documents(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[DocumentMeta]:
-    tenant_id = principal.tenant_id
-    docs = [d for d in load_index()["documents"] if d["tenant_id"] == tenant_id]
+    docs = index_store.list_docs(principal.tenant_id)
     return [
         DocumentMeta(
             file_name=d["file_name"],
@@ -204,89 +244,62 @@ def delete_document(
     file_name: str,
     principal: Annotated[Principal, Depends(principal_from_auth)],
 ) -> dict:
+    require_role(principal, "admin")
     tenant_id = principal.tenant_id
     safe_name = safe_filename(file_name)
-    index = load_index()
-    before = len(index["documents"])
-    index["documents"] = [
-        d for d in index["documents"]
-        if not (d["tenant_id"] == tenant_id and d["file_name"] == safe_name)
-    ]
-    if len(index["documents"]) == before:
+    deleted = index_store.delete_doc(tenant_id, safe_name)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Document not found")
-    # Remove file from disk
-    disk_path = (UPLOAD_DIR / tenant_id / safe_name).resolve()
-    assert_safe_path(disk_path, UPLOAD_DIR / tenant_id)
-    if disk_path.exists():
-        disk_path.unlink()
-    save_index(index)
+    storage.delete(tenant_id, safe_name)
     log.info("deleted document tenant=%s file=%s", tenant_id, safe_name)
     return {"ok": True, "file_name": safe_name}
 
 
+# ── Routes: upload ────────────────────────────────────────────────────────────
 @app.post("/api/upload")
 async def upload_document(
     request: Request,
     principal: Annotated[Principal, Depends(principal_from_auth)],
     file: UploadFile = File(...),
 ) -> dict:
+    require_role(principal, "admin", "uploader")
     tenant_id = principal.tenant_id
 
-    # Sec fix #2: check Content-Length before reading
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
 
     content = await file.read()
-
-    # Sec fix #2b: hard size check after read
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
-
-    # Sec fix #4: magic bytes — validate real PDF regardless of extension
     if content[:4] != PDF_MAGIC:
         raise HTTPException(status_code=400, detail="File is not a valid PDF")
-
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename required")
 
-    tenant_dir = UPLOAD_DIR / tenant_id
-    tenant_dir.mkdir(parents=True, exist_ok=True)
     file_name = safe_filename(file.filename)
-
-    # Sec fix #3: path traversal guard
-    disk_path = (tenant_dir / file_name).resolve()
-    assert_safe_path(disk_path, tenant_dir)
-
-    disk_path.write_bytes(content)
-
-    # Sec fix #5: wrap PDF parsing, use chunks instead of raw pages
     chunks = extract_chunks(content)
+    uri = storage.upload(tenant_id, file_name, content)
 
-    index = load_index()
-    index["documents"] = [
-        d for d in index["documents"]
-        if not (d["tenant_id"] == tenant_id and d["file_name"] == file_name)
-    ]
-    index["documents"].append({
+    index_store.upsert_doc(tenant_id, {
         "tenant_id": tenant_id,
         "file_name": file_name,
-        "path": str(disk_path),
+        "storage_uri": uri,
         "chunks": chunks,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     })
-    save_index(index)
-    log.info("upload tenant=%s file=%s chunks=%d", tenant_id, file_name, len(chunks))
+    log.info("upload tenant=%s file=%s chunks=%d uri=%s", tenant_id, file_name, len(chunks), uri)
     return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks)}
 
 
+# ── Routes: chat ──────────────────────────────────────────────────────────────
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> ChatResponse:
     tenant_id = principal.tenant_id
     queries_used = enforce_quota(tenant_id)
     query_terms = tokenize(req.message)
-    docs = [d for d in load_index()["documents"] if d["tenant_id"] == tenant_id]
-    matches: list[Citation] = []
+    docs = index_store.list_docs(tenant_id)
+    scored: list[tuple[int, Citation]] = []
 
     for doc in docs:
         chunks = doc.get("chunks") or [
@@ -296,34 +309,128 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         for chunk in chunks:
             score = len(query_terms & tokenize(chunk["text"]))
             if score:
-                excerpt = chunk["text"][:280].replace("\n", " ")
-                matches.append(Citation(
+                scored.append((score, Citation(
                     file_name=doc["file_name"],
+                    page=chunk.get("page", 1),
                     chunk_index=chunk["chunk_index"],
-                    excerpt=excerpt,
-                ))
-            if len(matches) >= 3:
-                break
-        if len(matches) >= 3:
-            break
+                    excerpt=chunk["text"][:280].replace("\n", " "),
+                )))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    matches = [c for _, c in scored[:3]]
 
     if not matches:
-        answer = "I cannot find that answer in this tenant's uploaded documents."
+        answer = "I cannot find that answer in your uploaded documents."
     else:
         files = ", ".join(sorted({m.file_name for m in matches}))
-        answer = f"Local mock RAG found relevant tenant-scoped context in {files}."
+        answer = (
+            f"Based on your documents ({files}), here is the relevant content. "
+            f"[Wire Vertex AI + Gemini to replace this with a real generated answer.]"
+        )
 
-    log.info("chat tenant=%s terms=%d matches=%d queries_used=%d",
-             tenant_id, len(query_terms), len(matches), queries_used)
+    log.info(
+        "chat tenant=%s terms=%d matches=%d queries_used=%d",
+        tenant_id, len(query_terms), len(matches), queries_used,
+    )
     return ChatResponse(
         answer=answer,
-        citations=matches[:3],
+        citations=matches,
         tenant_id=tenant_id,
         queries_used=queries_used,
         query_limit=QUERY_LIMIT,
     )
 
 
+# ── Routes: members ───────────────────────────────────────────────────────────
+@app.get("/api/tenant/members", response_model=list[MemberOut])
+def list_members(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[MemberOut]:
+    require_role(principal, "admin")
+    members = member_store.get_members(principal.tenant_id)
+    return [MemberOut(uid=m.uid, email=m.email, role=m.role, invited_at=m.invited_at, joined_at=m.joined_at)
+            for m in members]
+
+
+@app.post("/api/tenant/invite", status_code=201)
+def invite_member(
+    body: InviteRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    if body.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of {list(VALID_ROLES)}")
+    tenant_id = principal.tenant_id
+    now = datetime.now(timezone.utc).isoformat()
+    uid = f"invited-{re.sub(r'[^a-z0-9]', '-', body.email.lower())}"
+
+    # Prevent duplicate email
+    existing = member_store.get_members(tenant_id)
+    if any(m.email == body.email for m in existing):
+        raise HTTPException(status_code=409, detail="Member with this email already exists")
+
+    member = MemberRecord(uid=uid, email=body.email, role=body.role, invited_at=now, joined_at=None)
+    member_store.add_member(tenant_id, member)
+
+    # Dev: log invite link instead of sending email
+    invite_link = f"http://localhost:5173/?invite={uid}&tenant={tenant_id}"
+    log.info("invite tenant=%s email=%s role=%s link=%s", tenant_id, body.email, body.role, invite_link)
+    return {"ok": True, "uid": uid, "invite_link": invite_link}
+
+
+@app.patch("/api/tenant/members/{uid}")
+def update_member_role(
+    uid: str,
+    body: RoleRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    if body.role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of {list(VALID_ROLES)}")
+    tenant_id = principal.tenant_id
+    members = member_store.get_members(tenant_id)
+    if not any(m.uid == uid for m in members):
+        raise HTTPException(status_code=404, detail="Member not found")
+    member_store.update_role(tenant_id, uid, body.role)
+    log.info("role_change tenant=%s uid=%s role=%s by=%s", tenant_id, uid, body.role, principal.uid)
+    return {"ok": True, "uid": uid, "role": body.role}
+
+
+@app.delete("/api/tenant/members/{uid}")
+def remove_member(
+    uid: str,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    tenant_id = principal.tenant_id
+    # Prevent self-removal
+    if uid == principal.uid:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+    members = member_store.get_members(tenant_id)
+    if not any(m.uid == uid for m in members):
+        raise HTTPException(status_code=404, detail="Member not found")
+    member_store.remove_member(tenant_id, uid)
+    log.info("remove_member tenant=%s uid=%s by=%s", tenant_id, uid, principal.uid)
+    return {"ok": True, "uid": uid}
+
+
+# ── Routes: tenant hard-erase ─────────────────────────────────────────────────
+@app.delete("/api/tenant")
+def delete_tenant(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    tenant_id = principal.tenant_id
+
+    # Delete all files and index entries for this tenant
+    storage.delete_tenant(tenant_id)
+    removed = index_store.delete_tenant(tenant_id)
+
+    # Clear usage counters and members
+    usage_store.reset_tenant(tenant_id)
+    member_store.delete_tenant(tenant_id)
+
+    log.info("tenant_erased tenant=%s docs=%d by=%s", tenant_id, removed, principal.uid)
+    return {"ok": True, "tenant_id": tenant_id, "documents_removed": removed}
+
+
+# ── Routes: dev reset ─────────────────────────────────────────────────────────
 @app.post("/api/dev/reset")
 def reset_dev_state() -> dict:
     if config.env == "production":

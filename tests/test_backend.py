@@ -12,28 +12,33 @@ HEADERS_A = {"Authorization": "Bearer tenant-a-token"}
 HEADERS_B = {"Authorization": "Bearer tenant-b-token"}
 
 
+TEST_DOCS = [
+    {
+        "tenant_id": "tenant-a",
+        "file_name": "secret_a.pdf",
+        "path": "local_data/uploads/tenant-a/secret_a.pdf",
+        "chunks": [{"page": 1, "chunk_index": 0, "text": "Tenant A lease includes blue parking permits."}],
+        "uploaded_at": "2026-05-31T00:00:00Z",
+    },
+    {
+        "tenant_id": "tenant-b",
+        "file_name": "secret_b.pdf",
+        "path": "local_data/uploads/tenant-b/secret_b.pdf",
+        "chunks": [{"page": 1, "chunk_index": 0, "text": "Tenant B contract mentions red elevator access."}],
+        "uploaded_at": "2026-05-31T00:00:00Z",
+    },
+]
+
+
 def setup_function() -> None:
     usage_store.reset()
-    save_index(
-        {
-            "documents": [
-                {
-                    "tenant_id": "tenant-a",
-                    "file_name": "secret_a.pdf",
-                    "path": "local_data/uploads/tenant-a/secret_a.pdf",
-                    "pages": ["Tenant A lease includes blue parking permits."],
-                    "uploaded_at": "2026-05-31T00:00:00Z",
-                },
-                {
-                    "tenant_id": "tenant-b",
-                    "file_name": "secret_b.pdf",
-                    "path": "local_data/uploads/tenant-b/secret_b.pdf",
-                    "pages": ["Tenant B contract mentions red elevator access."],
-                    "uploaded_at": "2026-05-31T00:00:00Z",
-                },
-            ]
-        }
-    )
+    # Load existing index and replace only the two test tenant docs
+    from backend.main import load_index
+    idx = load_index()
+    test_tenants = {"tenant-a", "tenant-b"}
+    idx["documents"] = [d for d in idx["documents"] if d["tenant_id"] not in test_tenants]
+    idx["documents"].extend(TEST_DOCS)
+    save_index(idx)
 
 
 def test_chat_is_tenant_scoped() -> None:

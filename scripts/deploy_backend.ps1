@@ -18,3 +18,4 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     Write-Error "Deployment failed."
 }
+    

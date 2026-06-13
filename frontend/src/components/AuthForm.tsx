@@ -69,6 +69,11 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
         >
           {isNew ? "Already have an account? Sign in" : "No account? Create one"}
         </button>
+
+        <p className="auth-privacy">
+          By signing in you agree to our{" "}
+          <a href="/privacy" className="auth-privacy-link">Privacy &amp; Data Policy</a>.
+        </p>
       </div>
     </div>
   );

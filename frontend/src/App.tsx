@@ -1,12 +1,15 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { motion } from "framer-motion";
 import { devSignInTenant, signInWithPassword, signUpWithPassword } from "./firebase";
 import { Sidebar } from "./components/Sidebar";
 import { UploadBar } from "./components/UploadBar";
 import { ChatWindow, ChatMessage } from "./components/ChatWindow";
 import { DocumentList, DocumentMeta } from "./components/DocumentList";
+import { MembersPanel, Member } from "./components/MembersPanel";
 import { AuthForm } from "./components/AuthForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Privacy } from "./pages/Privacy";
 import "./styles.css";
 
 const API          = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
@@ -25,12 +28,6 @@ type Status = {
   documents: number;
 };
 
-type UploadState = {
-  msg: string;
-  type: "idle" | "uploading" | "success" | "error";
-  progress: number; // 0-100
-};
-
 function loadChatHistory(tenantEmail: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`ragaas:chat:${tenantEmail}`);
@@ -43,7 +40,14 @@ function loadChatHistory(tenantEmail: string): ChatMessage[] {
 function saveChatHistory(tenantEmail: string, messages: ChatMessage[]) {
   try {
     localStorage.setItem(`ragaas:chat:${tenantEmail}`, JSON.stringify(messages.slice(-100)));
-  } catch { /* storage full — ignore */ }
+  } catch { /* storage full */ }
+}
+
+// Privacy page — simple path check, no router needed
+if (window.location.pathname === "/privacy") {
+  createRoot(document.getElementById("root")!).render(<Privacy />);
+} else {
+  createRoot(document.getElementById("root")!).render(<App />);
 }
 
 function App() {
@@ -55,10 +59,11 @@ function App() {
   const [messages, setMessages]       = useState<ChatMessage[]>([]);
   const [question, setQuestion]       = useState("");
   const [isLoading, setIsLoading]     = useState(false);
-  const [upload, setUpload]           = useState<UploadState>({ msg: "", type: "idle", progress: 0 });
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
+  const [members, setMembers]         = useState<Member[]>([]);
   const tokenRef                      = useRef("");
+  const currentUidRef                 = useRef("");
 
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
@@ -67,55 +72,16 @@ function App() {
   const refreshStatus = useCallback(async () => {
     if (!tokenRef.current) return;
     try {
-      const [statusRes, docsRes] = await Promise.all([
-        fetch(`${API}/api/tenant/status`, { headers: authHeaders() }),
-        fetch(`${API}/api/documents`,     { headers: authHeaders() }),
+      const [statusRes, docsRes, membersRes] = await Promise.all([
+        fetch(`${API}/api/tenant/status`,  { headers: authHeaders() }),
+        fetch(`${API}/api/documents`,      { headers: authHeaders() }),
+        fetch(`${API}/api/tenant/members`, { headers: authHeaders() }),
       ]);
-      if (statusRes.ok) setStatus(await statusRes.json());
-      if (docsRes.ok)   setDocs(await docsRes.json());
+      if (statusRes.ok)  setStatus(await statusRes.json());
+      if (docsRes.ok)    setDocs(await docsRes.json());
+      if (membersRes.ok) setMembers(await membersRes.json());
     } catch { /* backend may be starting */ }
   }, []);
-
-  async function handleUpload(file: File) {
-    setUpload({ msg: "Uploading…", type: "uploading", progress: 0 });
-    try {
-      const data = new FormData();
-      data.append("file", file);
-
-      const result = await new Promise<{ ok: boolean; body: Record<string, unknown> }>((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", `${API}/api/upload`);
-        xhr.setRequestHeader("Authorization", `Bearer ${tokenRef.current}`);
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setUpload((prev) => ({ ...prev, progress: Math.round((e.loaded / e.total) * 100) }));
-          }
-        };
-
-        xhr.onload = () => {
-          try {
-            resolve({ ok: xhr.status < 300, body: JSON.parse(xhr.responseText) });
-          } catch {
-            resolve({ ok: false, body: { detail: "Invalid server response" } });
-          }
-        };
-
-        xhr.onerror = () => resolve({ ok: false, body: { detail: "Network error" } });
-        xhr.send(data);
-      });
-
-      if (result.ok) {
-        const chunks = result.body.chunks as number;
-        setUpload({ msg: `${result.body.file_name} · ${chunks} chunks indexed`, type: "success", progress: 100 });
-        refreshStatus();
-      } else {
-        setUpload({ msg: String(result.body.detail ?? "Upload failed"), type: "error", progress: 0 });
-      }
-    } catch {
-      setUpload({ msg: "Network error", type: "error", progress: 0 });
-    }
-  }
 
   async function handleDelete(fileName: string) {
     setDeleting(fileName);
@@ -133,12 +99,46 @@ function App() {
     }
   }
 
+  async function handleInvite(email: string, role: string) {
+    const res = await fetch(`${API}/api/tenant/invite`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail ?? "Invite failed");
+    await refreshStatus();
+  }
+
+  async function handleRemove(uid: string) {
+    const res = await fetch(`${API}/api/tenant/members/${uid}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.detail ?? "Remove failed");
+    }
+    setMembers((prev) => prev.filter((m) => m.uid !== uid));
+  }
+
+  async function handleChangeRole(uid: string, role: string) {
+    const res = await fetch(`${API}/api/tenant/members/${uid}`, {
+      method: "PATCH",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    if (res.ok) {
+      setMembers((prev) => prev.map((m) => m.uid === uid ? { ...m, role: role as Member["role"] } : m));
+    }
+  }
+
   async function handleSend(e: FormEvent) {
     e.preventDefault();
     const text = question.trim();
     if (!text) return;
     setQuestion("");
-    const next: ChatMessage[] = [...messages, { role: "user", text }];
+    const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now() }];
     setMessages(next);
     setIsLoading(true);
     try {
@@ -151,7 +151,7 @@ function App() {
       const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
       const updated: ChatMessage[] = [
         ...next,
-        { role: "assistant", text: answer, citations: body.citations ?? [] },
+        { role: "assistant", text: answer, citations: body.citations ?? [], timestamp: Date.now() },
       ];
       setMessages(updated);
       saveChatHistory(tenantEmail, updated);
@@ -168,7 +168,7 @@ function App() {
     }
   }
 
-  // ── Auth: dev emulator mode (auto sign-in) ──────────────────────────────
+  // ── Auth: dev emulator (auto sign-in) ───────────────────────────────────
   useEffect(() => {
     if (!USE_EMULATOR || !tenantEmail) return;
     let live = true;
@@ -177,6 +177,7 @@ function App() {
     setIdToken("");
     setStatus(null);
     setDocs([]);
+    setMembers([]);
     tokenRef.current = "";
     const history = loadChatHistory(tenantEmail);
     setMessages(history);
@@ -184,6 +185,9 @@ function App() {
     devSignInTenant(tenantEmail)
       .then((token) => {
         if (!live) return;
+        // Dev mock tokens map tenant → uid
+        const mockUid = `dev-${tenantEmail.replace("@ragaas.local", "").replace("@", "-")}`;
+        currentUidRef.current = mockUid;
         tokenRef.current = token;
         setIdToken(token);
         setOnline(true);
@@ -198,13 +202,14 @@ function App() {
     return () => { live = false; };
   }, [tenantEmail]);
 
-  // ── Auth: prod mode (form sign-in, handled by AuthForm) ────────────────
+  // ── Auth: prod mode (form sign-in) ──────────────────────────────────────
   const handleProdAuth = useCallback(async (email: string, password: string, isNew: boolean) => {
     try {
       const cred = isNew
         ? await signUpWithPassword(email, password)
         : await signInWithPassword(email, password);
       const token = await cred.user.getIdToken();
+      currentUidRef.current = cred.user.uid;
       tokenRef.current = token;
       setIdToken(token);
       setOnline(true);
@@ -221,12 +226,17 @@ function App() {
     refreshStatus();
   }, [idToken, refreshStatus]);
 
-  // ── Prod: show auth form when not signed in ─────────────────────────────
+  // ── Prod: show auth form ─────────────────────────────────────────────────
   if (!USE_EMULATOR && !online) {
     return (
       <div className="shell">
         <nav className="global-nav">
           <span className="nav-brand">RAGaaS</span>
+          <span className="nav-spacer" />
+          <div className="nav-status">
+            <span className="nav-dot offline" />
+            Sign in to continue
+          </div>
         </nav>
         <ErrorBoundary>
           <AuthForm onAuth={handleProdAuth} error={authState === "idle" ? "" : authState} />
@@ -235,11 +245,42 @@ function App() {
     );
   }
 
+  // Dev uid for the current mock token
+  const currentUid = USE_EMULATOR
+    ? `dev-${tenantEmail.replace("@ragaas.local", "").replace("@", "-")}`
+    : currentUidRef.current;
+
   return (
     <div className="shell">
       <nav className="global-nav">
-        <span className="nav-brand">RAGaaS</span>
-        <span className="nav-subtitle">{USE_EMULATOR ? "Local sandbox" : tenantEmail}</span>
+        <motion.span
+          className="nav-brand"
+          initial={{ opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          RAGaaS
+        </motion.span>
+        {USE_EMULATOR && (
+          <motion.span
+            className="nav-badge"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+          >
+            Local Dev
+          </motion.span>
+        )}
+        <span className="nav-spacer" />
+        <motion.div
+          className="nav-status"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3 }}
+        >
+          <span className={`nav-dot${!online ? (authState === "Signing in…" ? " pending" : " offline") : ""}`} />
+          {online ? (status?.tenant_id ?? tenantEmail) : authState}
+        </motion.div>
       </nav>
 
       <ErrorBoundary>
@@ -249,24 +290,32 @@ function App() {
           onTenantChange={(email) => {
             setTenantEmail(email);
             setMessages(loadChatHistory(email));
-            setUpload({ msg: "", type: "idle", progress: 0 });
           }}
           status={status}
           authState={authState}
           online={online}
           onRefresh={refreshStatus}
           extraSlot={
-            <DocumentList docs={docs} onDelete={handleDelete} deleting={deleting} />
+            <>
+              <DocumentList docs={docs} onDelete={handleDelete} deleting={deleting} />
+              <MembersPanel
+                members={members}
+                currentUid={currentUid}
+                onInvite={handleInvite}
+                onRemove={handleRemove}
+                onChangeRole={handleChangeRole}
+              />
+            </>
           }
         />
       </ErrorBoundary>
 
       <main className="workspace">
         <UploadBar
-          onUpload={handleUpload}
-          status={upload.msg}
-          statusType={upload.type}
-          progress={upload.progress}
+          apiUrl={API}
+          authToken={idToken}
+          disabled={!online}
+          onComplete={refreshStatus}
         />
         <ErrorBoundary>
           <ChatWindow
@@ -282,5 +331,3 @@ function App() {
     </div>
   );
 }
-
-createRoot(document.getElementById("root")!).render(<App />);

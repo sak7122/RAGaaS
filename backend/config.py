@@ -12,6 +12,7 @@ class Config:
     use_emulator: bool
     gcp_project_id: str
     cors_origin_regex: str
+    gcs_bucket: str             # GCS bucket for PDF storage (prod) | "" (dev)
 
 
 def _load() -> Config:
@@ -35,18 +36,17 @@ def _load() -> Config:
         use_emulator=use_emulator,
         gcp_project_id=os.getenv("GCP_PROJECT_ID", "ragaas-local"),
         cors_origin_regex=cors,  # type: ignore[arg-type]
+        gcs_bucket=os.getenv("GCS_BUCKET", ""),
     )
 
     # Sec fix #6: validate required prod env vars on startup
     if env == "production":
-        required = {
-            "FIREBASE_PROJECT_ID": cfg.firebase_project_id,
-            "GCP_PROJECT_ID": cfg.gcp_project_id,
-        }
         if cfg.firebase_project_id == "ragaas-local":
             _abort("FIREBASE_PROJECT_ID must be set to real project in production")
         if cfg.gcp_project_id == "ragaas-local":
             _abort("GCP_PROJECT_ID must be set to real project in production")
+        if not cfg.gcs_bucket:
+            _abort("GCS_BUCKET must be set in production")
 
     return cfg
 
