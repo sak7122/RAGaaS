@@ -129,7 +129,7 @@ jobs:
         run: npm run build
         env:
           VITE_FIREBASE_USE_EMULATOR: "false"
-          VITE_API_URL:               ${{ secrets.VITE_API_URL }}
+          VITE_API_URL:               ${{ needs.deploy-backend.outputs.cloud_run_url }}
           VITE_FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_API_KEY:      ${{ secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
