@@ -1,0 +1,51 @@
+###############################################################################
+# Frontend Prod Build (test only)
+#
+# Manual trigger. Builds the frontend with REAL production Firebase secrets to
+# verify the prod build compiles. Does NOT deploy anything (no Cloud Run, no
+# Hosting, no Terraform). Uploads the dist/ as an artifact for inspection.
+#
+# Uses secrets: VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN,
+#               VITE_FIREBASE_APP_ID, FIREBASE_PROJECT_ID
+# VITE_API_URL falls back to a placeholder (backend not deployed yet).
+###############################################################################
+
+name: Frontend Prod Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build frontend (prod secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build (production)
+        run: npm run build
+        env:
+          VITE_FIREBASE_USE_EMULATOR: "false"
+          VITE_API_URL:               ${{ secrets.VITE_API_URL || 'https://backend-not-deployed-yet.run.app' }}
+          VITE_FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_API_KEY:      ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-prod
+          path: dist/
+          retention-days: 3
