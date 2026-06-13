@@ -1,0 +1,26 @@
+# Local state — never commit
+*.tfstate
+*.tfstate.backup
+
+# Terraform working directory
+.terraform/
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files (local dev overrides)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI config with credentials
+.terraformrc
+terraform.rc
+
+# Secrets / local-only var files
+*.auto.tfvars
+secrets.tfvars
+
+# .terraform.lock.hcl IS committed — tracks provider versions
