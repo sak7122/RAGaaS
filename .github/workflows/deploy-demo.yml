@@ -6,8 +6,11 @@
 # before the real Cloud Run backend exists.
 #
 # Required secret:
-#   FIREBASE_TOKEN   — from:  firebase login:ci
-#                      (run locally, paste the printed token as a repo secret)
+#   FIREBASE_SERVICE_ACCOUNT  — JSON key of a service account with the
+#     "Firebase Hosting Admin" role. Generate via:
+#       Firebase Console -> Project settings -> Service accounts
+#         -> Generate new private key   (downloads a JSON file)
+#     Paste the ENTIRE JSON file contents as the secret value.
 #
 # Uses the real Firebase web app for auth UI, but all API calls are mocked.
 ###############################################################################
@@ -44,8 +47,9 @@ jobs:
           VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
 
       - name: Deploy to Firebase Hosting
-        uses: w9jds/firebase-action@v13.23.1
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          args: deploy --only hosting --project ${{ secrets.FIREBASE_PROJECT_ID }}
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          repoToken:              ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId:              live
+          projectId:              ${{ secrets.FIREBASE_PROJECT_ID }}
