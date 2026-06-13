@@ -9,7 +9,10 @@ locals {
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "firebase.googleapis.com",
+    "firebaserules.googleapis.com",
+    "firebasehosting.googleapis.com",
     "identitytoolkit.googleapis.com",
+    "serviceusage.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "artifactregistry.googleapis.com",
   ]

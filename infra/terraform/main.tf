@@ -30,6 +30,14 @@ module "wif" {
   depends_on       = [module.iam]
 }
 
+module "firebase" {
+  source               = "./modules/firebase"
+  project_id           = var.project_id
+  firestore_location   = var.region
+  firestore_rules_file = "${path.module}/../../firestore.rules"
+  depends_on           = [module.apis]
+}
+
 module "storage" {
   source           = "./modules/storage"
   project_id       = var.project_id
