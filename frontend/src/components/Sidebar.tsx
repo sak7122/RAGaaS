@@ -1,5 +1,14 @@
 import { ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Variants } from "framer-motion";
+
+const sectionVariants: Variants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" as const },
+  }),
+};
 import { RefreshCcw, Shield, FileText, Users } from "lucide-react";
 
 type Status = {
@@ -75,15 +84,6 @@ export function Sidebar({
   const queriesUsed = status?.queries_used ?? 0;
   const queryLimit  = status?.query_limit  ?? 1000;
   const docs        = status?.documents    ?? 0;
-
-  const sectionVariants = {
-    hidden: { opacity: 0, y: 10 },
-    visible: (i: number) => ({
-      opacity: 1,
-      y: 0,
-      transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" },
-    }),
-  };
 
   return (
     <aside className="sidebar">
