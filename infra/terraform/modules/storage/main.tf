@@ -1,9 +1,9 @@
-variable "project_id"       { type = string }
-variable "region"           { type = string }
-variable "pdf_bucket_name"  { type = string }
-variable "tf_state_bucket"  { type = string }
+variable "project_id" { type = string }
+variable "region" { type = string }
+variable "pdf_bucket_name" { type = string }
+variable "tf_state_bucket" { type = string }
 variable "runtime_sa_email" { type = string }
-variable "firebase_domain"  { type = string }
+variable "firebase_domain" { type = string }
 
 # ── PDF uploads bucket ────────────────────────────────────────────────────────
 resource "google_storage_bucket" "pdfs" {

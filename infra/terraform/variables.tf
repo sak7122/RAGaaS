@@ -47,8 +47,8 @@ variable "cloud_run_min_instances" {
 }
 
 variable "cloud_run_max_instances" {
-  type        = number
-  default     = 10
+  type    = number
+  default = 10
 }
 
 variable "cloud_run_memory" {

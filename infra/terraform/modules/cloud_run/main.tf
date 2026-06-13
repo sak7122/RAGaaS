@@ -1,13 +1,46 @@
-variable "project_id"          { type = string }
-variable "region"              { type = string }
-variable "runtime_sa_email"   { type = string }
-variable "gcs_bucket"         { type = string }
-variable "firebase_project_id" { type = string }
-variable "cors_origin_regex"  { type = string }
-variable "min_instances"      { type = number; default = 0 }
-variable "max_instances"      { type = number; default = 10 }
-variable "memory"             { type = string; default = "512Mi" }
-variable "cpu"                { type = string; default = "1" }
+variable "project_id" {
+  type = string
+}
+
+variable "region" {
+  type = string
+}
+
+variable "runtime_sa_email" {
+  type = string
+}
+
+variable "gcs_bucket" {
+  type = string
+}
+
+variable "firebase_project_id" {
+  type = string
+}
+
+variable "cors_origin_regex" {
+  type = string
+}
+
+variable "min_instances" {
+  type    = number
+  default = 0
+}
+
+variable "max_instances" {
+  type    = number
+  default = 10
+}
+
+variable "memory" {
+  type    = string
+  default = "512Mi"
+}
+
+variable "cpu" {
+  type    = string
+  default = "1"
+}
 
 # ── Artifact Registry for Docker images ───────────────────────────────────────
 resource "google_artifact_registry_repository" "backend" {
