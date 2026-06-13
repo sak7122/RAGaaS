@@ -1,6 +1,6 @@
 config {
   format           = "compact"
-  call_module_type = "local_only"
+  call_module_type = "local"
 }
 
 plugin "google" {
