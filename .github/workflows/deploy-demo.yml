@@ -1,18 +1,17 @@
 ###############################################################################
-# Deploy Demo to Firebase Hosting
+# Deploy Demo to Firebase Hosting (keyless WIF)
 #
 # Manual trigger. Builds the frontend in DEMO MODE (fake in-browser backend,
-# no server needed) and deploys to Firebase Hosting. Lets you see the app live
-# before the real Cloud Run backend exists.
+# no server needed) and deploys to Firebase Hosting via Workload Identity
+# Federation — no service-account JSON key (blocked by org policy).
 #
-# Required secret:
-#   FIREBASE_SERVICE_ACCOUNT  — JSON key of a service account with the
-#     "Firebase Hosting Admin" role. Generate via:
-#       Firebase Console -> Project settings -> Service accounts
-#         -> Generate new private key   (downloads a JSON file)
-#     Paste the ENTIRE JSON file contents as the secret value.
+# Required secrets (same as infra/app pipelines):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER   from terraform output wif_provider
+#   GCP_SERVICE_ACCOUNT              from terraform output deployer_sa_email
+#   FIREBASE_PROJECT_ID              snappy-mapper-498223-b2
 #
-# Uses the real Firebase web app for auth UI, but all API calls are mocked.
+# NOTE: WIF + the deployer SA are created by `terraform apply`. Run the infra
+#       bootstrap first, then this workflow can deploy keylessly.
 ###############################################################################
 
 name: Deploy Demo
@@ -24,6 +23,10 @@ jobs:
   deploy:
     name: Build (demo) + deploy to Hosting
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required for WIF
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,20 +39,15 @@ jobs:
         run: npm ci
 
       - name: Build (DEMO mode)
-        run: npm run build
-        env:
-          VITE_DEMO_MODE:             "true"
-          VITE_FIREBASE_USE_EMULATOR: "false"
-          VITE_API_URL:               "https://demo-no-backend.invalid"
-          VITE_FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_API_KEY:      ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: npm run build:demo
 
-      - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
         with:
-          repoToken:              ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          channelId:              live
-          projectId:              ${{ secrets.FIREBASE_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # firebase-tools picks up ADC from GOOGLE_APPLICATION_CREDENTIALS
+      # (set by the auth step above) — no JSON key needed.
+      - name: Deploy to Firebase Hosting
+        run: npx firebase-tools@latest deploy --only hosting --project "${{ secrets.FIREBASE_PROJECT_ID }}" --non-interactive

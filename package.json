@@ -2,6 +2,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "build:demo": "vite build --mode demo",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
