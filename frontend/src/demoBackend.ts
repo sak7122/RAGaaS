@@ -34,6 +34,9 @@ const demoStatus = () => ({
 
 function cannedAnswer(question: string) {
   queriesUsed += 1;
+  const terms = Array.from(
+    new Set(question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []),
+  ).sort();
   return {
     answer:
       `Based on your documents, here's what I found regarding "${question.slice(0, 60)}": ` +
@@ -41,9 +44,18 @@ function cannedAnswer(question: string) {
       "prioritizes the multi-region rollout for Q1 2026. (This is a demo response — wire " +
       "the real backend to replace it with live RAG answers.)",
     citations: [
-      { file_name: "Q3_Earnings_Report.pdf", page: 4, chunk_index: 12, excerpt: "Total revenue for the third quarter reached $4.2M, an 18% increase year over year, led by enterprise segment growth." },
-      { file_name: "Product_Roadmap_2026.pdf", page: 2, chunk_index: 3, excerpt: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
+      { file_name: "Q3_Earnings_Report.pdf", page: 4, chunk_index: 12, score: 0.92, excerpt: "Total revenue for the third quarter reached $4.2M, an 18% increase year over year, led by enterprise segment growth." },
+      { file_name: "Product_Roadmap_2026.pdf", page: 2, chunk_index: 3, score: 0.74, excerpt: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
     ],
+    retrieval: {
+      engine: "Vertex AI Search",
+      query_terms: terms,
+      chunks_searched: 207,
+      candidates_ranked: 11,
+      top_k: 2,
+      max_score: 0.92,
+      latency_ms: 180 + Math.floor(Math.random() * 90),
+    },
     tenant_id: "acme-corp",
     queries_used: queriesUsed,
     query_limit: 1000,

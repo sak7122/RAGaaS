@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -40,6 +42,8 @@ INDEX_FILE     = DATA_DIR / "index.json"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 PDF_MAGIC      = b"%PDF"
 VALID_ROLES    = {"admin", "uploader", "viewer"}
+# Retrieval engine label surfaced in the UI. Set to the real engine once wired.
+RAG_ENGINE_LABEL = os.getenv("RAG_ENGINE_LABEL", "Vertex AI Search")
 
 # Dev-only mock tokens — empty dict in production
 TOKEN_TENANT_MAP: dict[str, str] = (
@@ -82,11 +86,23 @@ class Citation(BaseModel):
     page: int
     chunk_index: int
     excerpt: str
+    score: float = 0.0          # normalized relevance 0..1
+
+
+class RetrievalTrace(BaseModel):
+    engine: str                 # retrieval engine label
+    query_terms: list[str]      # terms extracted from the question
+    chunks_searched: int        # total chunks scanned for this tenant
+    candidates_ranked: int      # chunks with a non-zero score
+    top_k: int                  # how many returned
+    max_score: float            # best relevance score
+    latency_ms: int             # retrieval time
 
 
 class ChatResponse(BaseModel):
     answer: str
     citations: list[Citation]
+    retrieval: RetrievalTrace
     tenant_id: str
     queries_used: int
     query_limit: int
@@ -299,7 +315,11 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
     queries_used = enforce_quota(tenant_id)
     query_terms = tokenize(req.message)
     docs = index_store.list_docs(tenant_id)
-    scored: list[tuple[int, Citation]] = []
+
+    started = time.perf_counter()
+    scored: list[tuple[float, Citation]] = []
+    chunks_searched = 0
+    denom = max(len(query_terms), 1)
 
     for doc in docs:
         chunks = doc.get("chunks") or [
@@ -307,17 +327,23 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
             for i, p in enumerate(doc.get("pages", []))
         ]
         for chunk in chunks:
-            score = len(query_terms & tokenize(chunk["text"]))
-            if score:
+            chunks_searched += 1
+            overlap = len(query_terms & tokenize(chunk["text"]))
+            if overlap:
+                # Normalize to 0..1 so the UI can render a relevance bar
+                score = round(overlap / denom, 4)
                 scored.append((score, Citation(
                     file_name=doc["file_name"],
                     page=chunk.get("page", 1),
                     chunk_index=chunk["chunk_index"],
                     excerpt=chunk["text"][:280].replace("\n", " "),
+                    score=score,
                 )))
 
     scored.sort(key=lambda t: t[0], reverse=True)
-    matches = [c for _, c in scored[:3]]
+    top = scored[:3]
+    matches = [c for _, c in top]
+    latency_ms = max(int((time.perf_counter() - started) * 1000), 1)
 
     if not matches:
         answer = "I cannot find that answer in your uploaded documents."
@@ -328,13 +354,24 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
             f"[Wire Vertex AI + Gemini to replace this with a real generated answer.]"
         )
 
+    retrieval = RetrievalTrace(
+        engine=RAG_ENGINE_LABEL,
+        query_terms=sorted(query_terms),
+        chunks_searched=chunks_searched,
+        candidates_ranked=len(scored),
+        top_k=len(matches),
+        max_score=top[0][0] if top else 0.0,
+        latency_ms=latency_ms,
+    )
+
     log.info(
-        "chat tenant=%s terms=%d matches=%d queries_used=%d",
-        tenant_id, len(query_terms), len(matches), queries_used,
+        "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
+        tenant_id, len(query_terms), chunks_searched, len(scored), len(matches), latency_ms, queries_used,
     )
     return ChatResponse(
         answer=answer,
         citations=matches,
+        retrieval=retrieval,
         tenant_id=tenant_id,
         queries_used=queries_used,
         query_limit=QUERY_LIMIT,

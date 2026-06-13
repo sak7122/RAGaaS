@@ -806,6 +806,168 @@ html {
   border-top: 1px solid rgba(0,102,204,0.10);
 }
 
+/* ── Citation relevance score bar ─────────────────────────────────────────── */
+.citation-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.citation-score-track {
+  width: 44px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: rgba(0,102,204,0.15);
+  overflow: hidden;
+}
+
+.citation-score-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--grad-primary, linear-gradient(135deg, #0066cc 0%, #0a84ff 100%));
+}
+
+.citation-score-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Retrieval trace panel ────────────────────────────────────────────────── */
+.retrieval {
+  width: 100%;
+  margin-top: var(--sp-xs);
+}
+
+.retrieval-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  width: 100%;
+  background: rgba(10,132,255,0.06);
+  border: 1px solid rgba(10,132,255,0.18);
+  border-radius: var(--r-md);
+  padding: 6px var(--sp-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.retrieval-toggle:hover { background: rgba(10,132,255,0.10); }
+
+.retrieval-engine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.retrieval-engine-name {
+  background: var(--grad-primary, linear-gradient(135deg, #0066cc 0%, #0a84ff 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.1px;
+}
+
+.retrieval-stat {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-48);
+  font-variant-numeric: tabular-nums;
+}
+
+.retrieval-stat:nth-of-type(2) { margin-left: auto; }
+
+.retrieval-chevron {
+  color: var(--ink-48);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.retrieval-chevron.flipped { transform: rotate(180deg); }
+
+.retrieval-body {
+  overflow: hidden;
+}
+
+.retrieval-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--sp-sm) 2px 6px;
+}
+
+.retrieval-term {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(0,102,204,0.10);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.retrieval-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 2px 4px;
+}
+
+.retrieval-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 5px 0;
+}
+
+.retrieval-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary-dim);
+  color: var(--primary);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.retrieval-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-80);
+}
+
+.retrieval-step-detail {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-48);
+  font-variant-numeric: tabular-nums;
+}
+
+.retrieval-step-line {
+  position: absolute;
+  left: 11px;
+  top: 29px;
+  width: 2px;
+  height: 9px;
+  background: rgba(0,102,204,0.20);
+}
+
 /* ─── Chat Form ────────────────────────────────────────────────────────────── */
 .chat-form {
   border-top: 1px solid var(--hairline);

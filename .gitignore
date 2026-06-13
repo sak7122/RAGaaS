@@ -32,3 +32,9 @@ firestore-debug.log
 
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .cursor/
+
+# Playwright
+test-results/
+playwright-report/
+.playwright-mcp/
+ui-retrieval-trace.png

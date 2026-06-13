@@ -3,7 +3,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "build:demo": "vite build --mode demo",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
@@ -16,6 +17,7 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3"
   }

@@ -141,8 +141,12 @@ function App() {
 
   async function handleSend(e: FormEvent) {
     e.preventDefault();
-    const text = question.trim();
-    if (!text) return;
+    await sendMessage(question);
+  }
+
+  async function sendMessage(raw: string) {
+    const text = raw.trim();
+    if (!text || isLoading) return;
     setQuestion("");
     const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now() }];
     setMessages(next);
@@ -157,7 +161,13 @@ function App() {
       const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
       const updated: ChatMessage[] = [
         ...next,
-        { role: "assistant", text: answer, citations: body.citations ?? [], timestamp: Date.now() },
+        {
+          role: "assistant",
+          text: answer,
+          citations: body.citations ?? [],
+          retrieval: body.retrieval,
+          timestamp: Date.now(),
+        },
       ];
       setMessages(updated);
       saveChatHistory(tenantEmail, updated);
@@ -341,6 +351,7 @@ function App() {
             isLoading={isLoading}
             onQuestionChange={setQuestion}
             onSend={handleSend}
+            onAsk={sendMessage}
             disabled={!online}
           />
         </ErrorBoundary>

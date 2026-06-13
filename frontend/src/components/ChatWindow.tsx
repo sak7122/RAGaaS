@@ -1,18 +1,30 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, ChevronDown, Copy, Check, Zap, ChevronRight } from "lucide-react";
+import { Send, ChevronDown, Copy, Check, Zap, ChevronRight, Search, Sparkles, Layers, Timer, Hash } from "lucide-react";
 
 export type Citation = {
   file_name: string;
   page: number;
   chunk_index: number;
   excerpt: string;
+  score?: number;
+};
+
+export type RetrievalTrace = {
+  engine: string;
+  query_terms: string[];
+  chunks_searched: number;
+  candidates_ranked: number;
+  top_k: number;
+  max_score: number;
+  latency_ms: number;
 };
 
 export type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   citations?: Citation[];
+  retrieval?: RetrievalTrace;
   timestamp?: number;
 };
 
@@ -22,6 +34,7 @@ interface ChatWindowProps {
   isLoading: boolean;
   onQuestionChange: (q: string) => void;
   onSend: (e: FormEvent) => void;
+  onAsk: (text: string) => void;
   disabled: boolean;
 }
 
@@ -50,6 +63,19 @@ function CitationCard({ c }: { c: Citation }) {
         <span className="citation-file-icon">📄</span>
         <span className="citation-meta">{shortName}</span>
         <span className="citation-page">p.{c.page}</span>
+        {typeof c.score === "number" && (
+          <span className="citation-score" title="Relevance score">
+            <span className="citation-score-track">
+              <motion.span
+                className="citation-score-fill"
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(c.score * 100, 100)}%` }}
+                transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+              />
+            </span>
+            <span className="citation-score-num">{Math.round(c.score * 100)}%</span>
+          </span>
+        )}
         <ChevronDown
           size={11}
           className={`citation-chevron${expanded ? " flipped" : ""}`}
@@ -70,6 +96,84 @@ function CitationCard({ c }: { c: Citation }) {
         )}
       </AnimatePresence>
     </motion.button>
+  );
+}
+
+function RetrievalTracePanel({ r }: { r: RetrievalTrace }) {
+  const [open, setOpen] = useState(false);
+  const steps = [
+    { icon: Sparkles, label: "Embed query", detail: `${r.query_terms.length} terms` },
+    { icon: Search,   label: r.engine,       detail: `${r.chunks_searched} chunks scanned` },
+    { icon: Layers,   label: "Rank candidates", detail: `${r.candidates_ranked} matched` },
+    { icon: Hash,     label: "Select top-k", detail: `${r.top_k} returned · best ${Math.round(r.max_score * 100)}%` },
+  ];
+  return (
+    <div className="retrieval">
+      <motion.button
+        type="button"
+        className="retrieval-toggle"
+        onClick={() => setOpen((v) => !v)}
+        whileHover={{ scale: 1.005 }}
+        whileTap={{ scale: 0.995 }}
+      >
+        <span className="retrieval-engine">
+          <Search size={12} />
+          <span className="retrieval-engine-name">{r.engine}</span>
+        </span>
+        <span className="retrieval-stat">
+          <Timer size={11} /> {r.latency_ms} ms
+        </span>
+        <span className="retrieval-stat">
+          {r.chunks_searched} chunks
+        </span>
+        <ChevronDown size={13} className={`retrieval-chevron${open ? " flipped" : ""}`} />
+      </motion.button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            className="retrieval-body"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+          >
+            <div className="retrieval-terms">
+              {r.query_terms.map((t, i) => (
+                <motion.span
+                  key={t}
+                  className="retrieval-term"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.03 }}
+                >
+                  {t}
+                </motion.span>
+              ))}
+            </div>
+            <div className="retrieval-steps">
+              {steps.map((s, i) => {
+                const Icon = s.icon;
+                return (
+                  <motion.div
+                    key={s.label}
+                    className="retrieval-step"
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.05 + i * 0.07 }}
+                  >
+                    <span className="retrieval-step-icon"><Icon size={13} /></span>
+                    <span className="retrieval-step-label">{s.label}</span>
+                    <span className="retrieval-step-detail">{s.detail}</span>
+                    {i < steps.length - 1 && <span className="retrieval-step-line" />}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -118,6 +222,7 @@ function MessageBubble({ msg, index }: { msg: ChatMessage; index: number }) {
           <CopyButton text={msg.text} />
         </div>
       </div>
+      {!isUser && msg.retrieval && <RetrievalTracePanel r={msg.retrieval} />}
       {msg.citations && msg.citations.length > 0 && (
         <motion.div
           className="citations"
@@ -182,6 +287,7 @@ export function ChatWindow({
   isLoading,
   onQuestionChange,
   onSend,
+  onAsk,
   disabled,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -232,7 +338,7 @@ export function ChatWindow({
                     key={s}
                     type="button"
                     className="suggestion-chip"
-                    onClick={() => onQuestionChange(s)}
+                    onClick={() => onAsk(s)}
                     disabled={disabled}
                     initial={{ opacity: 0, x: -12 }}
                     animate={{ opacity: 1, x: 0 }}
