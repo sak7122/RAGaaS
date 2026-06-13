@@ -12,7 +12,7 @@ class Config:
     use_emulator: bool
     gcp_project_id: str
     cors_origin_regex: str
-    gcs_bucket: str             # GCS bucket for PDF storage (prod) | "" (dev)
+    gcs_bucket: str             # GCS2 bucket for PDF storage (prod) | "" (dev)
 
 
 def _load() -> Config:
