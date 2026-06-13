@@ -1,0 +1,215 @@
+###############################################################################
+# RAGaaS — Infrastructure Pipeline (Terraform)
+#
+# Triggers:
+#   - push/PR touching infra/terraform/** → lint + validate + plan (auto)
+#   - workflow_dispatch → apply (MANUAL, type "apply" to confirm)
+#
+# Required GitHub Secrets (same as app pipeline):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER   from terraform output wif_provider
+#   GCP_SERVICE_ACCOUNT              from terraform output deployer_sa_email
+#   GCP_PROJECT_ID                   ragaas-af876
+#
+# Bootstrap (first time only, before any pipeline run):
+#   .\scripts\bootstrap_tf_state.ps1   # creates gs://ragaas-tf-state
+#
+# Stages:
+#   1. lint-validate  — fmt, init (no backend), validate, tflint, tfsec
+#   2. plan           — init (real backend), plan, posts diff to PR comment
+#   3. apply          — MANUAL ONLY (workflow_dispatch + confirm input == "apply")
+###############################################################################
+
+name: Infrastructure
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/infra.yml'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'infra/terraform/**'
+  workflow_dispatch:
+    inputs:
+      confirm_apply:
+        description: 'Type exactly "apply" to run terraform apply'
+        required: true
+        type: string
+
+defaults:
+  run:
+    working-directory: infra/terraform
+
+jobs:
+  # ── Stage 1: Lint & Validate (no GCP credentials needed) ─────────────────
+  lint-validate:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: terraform fmt check
+        run: terraform fmt -check -recursive
+
+      # Backend=false so this runs without GCP credentials
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      # tflint with Google ruleset
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.50.3
+
+      - name: tflint init
+        run: tflint --init
+
+      - name: tflint
+        run: tflint --recursive --format compact
+
+      # tfsec: static security analysis
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infra/terraform
+          soft_fail: false
+
+  # ── Stage 2: Plan (auto on push/PR, needs GCP auth) ──────────────────────
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    needs: lint-validate
+    if: github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write   # to post plan as PR comment
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform plan
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+          exit ${PIPESTATUS[0]}
+        continue-on-error: true   # capture failure; post to PR; fail below
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.sha }}
+          path: |
+            infra/terraform/tfplan
+            infra/terraform/plan.txt
+          retention-days: 7
+
+      # Post plan output as a PR comment (upsert so it stays one comment)
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const raw  = fs.readFileSync('infra/terraform/plan.txt', 'utf8');
+            const max  = 65000;
+            const body = [
+              '## Terraform Plan',
+              `> Commit: \`${context.sha.slice(0,7)}\`  |  Status: **${{ steps.plan.outcome }}**`,
+              '```hcl',
+              raw.length > max ? raw.slice(0, max) + '\n...(truncated — see artifact for full plan)' : raw,
+              '```',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.startsWith('## Terraform Plan'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ── Stage 3: Apply (MANUAL ONLY) ─────────────────────────────────────────
+  apply:
+    name: Apply (Manual)
+    runs-on: ubuntu-latest
+    needs: lint-validate
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.confirm_apply == 'apply'
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: terraform init
+        run: terraform init
+
+      # Fresh plan immediately before apply — never apply a stale artifact
+      - name: terraform plan (pre-apply)
+        run: terraform plan -no-color -out=tfplan
+
+      - name: terraform apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Print outputs (GitHub Secrets reference)
+        run: terraform output -json | jq .
