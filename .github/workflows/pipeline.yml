@@ -201,11 +201,8 @@ jobs:
           VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
 
-      # --- 3d. Deploy frontend to Firebase Hosting ---
+      # --- 3d. Deploy frontend to Firebase Hosting (keyless WIF) ---
+      # Org policy blocks SA JSON keys, so we use the WIF ADC set by the auth
+      # step (GOOGLE_APPLICATION_CREDENTIALS) instead of action-hosting-deploy.
       - name: Deploy frontend → Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken:              ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          channelId:              live
-          projectId:              ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: npx firebase-tools@latest deploy --only hosting --project "${{ secrets.FIREBASE_PROJECT_ID }}" --non-interactive
