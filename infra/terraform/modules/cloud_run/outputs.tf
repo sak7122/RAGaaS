@@ -12,3 +12,8 @@ output "artifact_registry_repo" {
   description = "Artifact Registry Docker repo path for backend images"
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.backend.repository_id}"
 }
+
+output "app_image" {
+  description = "Full image path CI pushes the real backend to (replaces the bootstrap placeholder)"
+  value       = local.app_image
+}

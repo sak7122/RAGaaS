@@ -51,8 +51,15 @@ resource "google_artifact_registry_repository" "backend" {
   format        = "DOCKER"
 }
 
+variable "bootstrap_image" {
+  type        = string
+  description = "Placeholder image for the initial create. CI replaces it via `gcloud run deploy --source`; ignore_changes keeps TF from reverting."
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
 locals {
-  image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.backend.repository_id}/backend:latest"
+  # Real app image path (after CI pushes). Exposed as an output for reference.
+  app_image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.backend.repository_id}/backend:latest"
 }
 
 # ── Cloud Run v2 service ──────────────────────────────────────────────────────
@@ -71,9 +78,10 @@ resource "google_cloud_run_v2_service" "backend" {
     }
 
     containers {
-      # First deploy: use a public hello image as placeholder.
-      # CI/CD pipeline replaces this on each deploy via --source flag.
-      image = local.image
+      # Boot with a public placeholder; CI swaps in the real image (see
+      # ignore_changes below). This lets `terraform apply` create the service
+      # before any app image exists in Artifact Registry.
+      image = var.bootstrap_image
 
       resources {
         limits = {
@@ -110,26 +118,10 @@ resource "google_cloud_run_v2_service" "backend" {
         container_port = 8000
       }
 
-      startup_probe {
-        http_get {
-          path = "/api/health"
-          port = 8000
-        }
-        initial_delay_seconds = 5
-        timeout_seconds       = 3
-        period_seconds        = 10
-        failure_threshold     = 3
-      }
-
-      liveness_probe {
-        http_get {
-          path = "/api/health"
-          port = 8000
-        }
-        period_seconds    = 30
-        timeout_seconds   = 5
-        failure_threshold = 2
-      }
+      # No custom HTTP probes here: the placeholder image used for the initial
+      # create does not serve /api/health, so an HTTP probe would fail the first
+      # apply. Cloud Run's default TCP startup check works for both placeholder
+      # and the real app. Add HTTP health checks via the app pipeline later.
     }
 
     timeout = "60s"
