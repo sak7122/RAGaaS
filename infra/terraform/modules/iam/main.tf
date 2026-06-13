@@ -10,13 +10,21 @@ resource "google_service_account" "deployer" {
 
 locals {
   deployer_roles = [
+    # ── App deploy (Cloud Run + frontend) ──
     "roles/run.admin",
     "roles/storage.admin",
     "roles/datastore.user",
     "roles/iam.serviceAccountUser",
     "roles/cloudbuild.builds.editor",
-    "roles/artifactregistry.writer",
+    "roles/artifactregistry.admin",
     "roles/firebase.admin",
+
+    # ── Infra management (so CI can run terraform apply) ──
+    "roles/serviceusage.serviceUsageAdmin",  # enable/disable APIs
+    "roles/iam.serviceAccountAdmin",         # create/manage SAs
+    "roles/resourcemanager.projectIamAdmin", # manage project IAM bindings
+    "roles/iam.workloadIdentityPoolAdmin",   # manage WIF pools/providers
+    "roles/datastore.owner",                 # create Firestore database
   ]
 }
 

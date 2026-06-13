@@ -12,14 +12,10 @@ terraform {
     }
   }
 
-  # Remote state — bootstrap the state bucket first:
-  #   gcloud storage buckets create gs://snappy-mapper-498223-b2-tf-state \
-  #     --project=snappy-mapper-498223-b2 --location=us-central1 \
-  #     --uniform-bucket-level-access
-  # Then: terraform init
+  # Remote state — bootstrap the state bucket first (see scripts/bootstrap_tf_state.ps1).
   # NOTE: backend block cannot use variables — bucket name is hardcoded.
   backend "gcs" {
-    bucket = "snappy-mapper-498223-b2-tf-state"
+    bucket = "ragaas-prod-tfstate"
     prefix = "terraform/state"
   }
 }

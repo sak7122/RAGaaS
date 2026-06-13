@@ -2,8 +2,8 @@ project_id          = "snappy-mapper-498223-b2"
 firebase_project_id = "snappy-mapper-498223-b2"
 region              = "us-central1"
 github_repo         = "sak7122/RAGaaS"
-gcs_pdf_bucket      = "snappy-mapper-498223-b2-ragaas-pdfs"
-tf_state_bucket     = "snappy-mapper-498223-b2-tf-state"
+gcs_pdf_bucket      = "ragaas-prod-pdfs"
+tf_state_bucket     = "ragaas-prod-tfstate"
 cors_origin_regex   = "https://snappy-mapper-498223-b2\\.web\\.app"
 
 cloud_run_min_instances = 0
