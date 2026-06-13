@@ -38,7 +38,7 @@ test("chat round-trip: answer, retrieval trace, scored citations", async ({ page
   await expect(page.getByText(/Based on your documents/i)).toBeVisible();
 
   // Retrieval trace toggle shows the engine + latency + chunk count
-  const trace = page.getByRole("button", { name: /Vertex AI Search/i });
+  const trace = page.getByRole("button", { name: /Hybrid Vector Search/i });
   await expect(trace).toBeVisible();
   await expect(trace).toContainText(/ms/);
   await expect(trace).toContainText(/chunks/);
@@ -60,7 +60,7 @@ test("chat round-trip: answer, retrieval trace, scored citations", async ({ page
 test("suggestion chip submits a query", async ({ page }) => {
   await page.getByRole("button", { name: /What is the minimum password length/i }).click();
   await expect(page.getByText(/Based on your documents/i)).toBeVisible();
-  await expect(page.getByRole("button", { name: /Vertex AI Search/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Hybrid Vector Search/i })).toBeVisible();
 });
 
 test("quota counter increments after a query", async ({ page }) => {

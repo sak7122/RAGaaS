@@ -48,7 +48,7 @@ function cannedAnswer(question: string) {
       { file_name: "Product_Roadmap_2026.pdf", page: 2, chunk_index: 3, score: 0.74, excerpt: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
     ],
     retrieval: {
-      engine: "Vertex AI Search",
+      engine: "Hybrid Vector Search",
       query_terms: terms,
       chunks_searched: 207,
       candidates_ranked: 11,

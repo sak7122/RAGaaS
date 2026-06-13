@@ -26,6 +26,7 @@ from backend.firebase_services import (
 )
 from backend.storage import create_storage_backend
 from backend.index_store import create_index_store
+from backend.rag import create_embedder, create_generator
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -42,8 +43,10 @@ INDEX_FILE     = DATA_DIR / "index.json"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 PDF_MAGIC      = b"%PDF"
 VALID_ROLES    = {"admin", "uploader", "viewer"}
-# Retrieval engine label surfaced in the UI. Set to the real engine once wired.
-RAG_ENGINE_LABEL = os.getenv("RAG_ENGINE_LABEL", "Vertex AI Search")
+# Retrieval engine label surfaced in the UI. Accurate for the DIY hybrid path;
+# set RAG_ENGINE_LABEL="Vertex AI Search" if you migrate to managed retrieval.
+RAG_ENGINE_LABEL = os.getenv("RAG_ENGINE_LABEL", "Hybrid Vector Search")
+HYBRID_VECTOR_WEIGHT = 0.7   # blend: 0.7*cosine + 0.3*keyword overlap
 
 # Dev-only mock tokens — empty dict in production
 TOKEN_TENANT_MAP: dict[str, str] = (
@@ -73,7 +76,10 @@ usage_store   = create_usage_store()
 member_store  = create_member_store()
 storage       = create_storage_backend(config.env, UPLOAD_DIR, config.gcs_bucket)
 index_store   = create_index_store(config.env, INDEX_FILE)
-log.info("startup env=%s emulator=%s", config.env, config.use_emulator)
+embedder      = create_embedder()
+generator     = create_generator()
+log.info("startup env=%s emulator=%s embedder=%s generator=%s",
+         config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -297,6 +303,14 @@ async def upload_document(
     chunks = extract_chunks(content)
     uri = storage.upload(tenant_id, file_name, content)
 
+    # Embed each chunk so it is retrievable by vector similarity
+    try:
+        vectors = embedder.embed([c["text"] for c in chunks])
+        for c, v in zip(chunks, vectors):
+            c["embedding"] = v
+    except Exception as exc:
+        log.warning("embedding failed for %s (%s); stored without vectors", file_name, exc)
+
     index_store.upsert_doc(tenant_id, {
         "tenant_id": tenant_id,
         "file_name": file_name,
@@ -314,63 +328,80 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
     tenant_id = principal.tenant_id
     queries_used = enforce_quota(tenant_id)
     query_terms = tokenize(req.message)
-    docs = index_store.list_docs(tenant_id)
-
-    started = time.perf_counter()
-    scored: list[tuple[float, Citation]] = []
-    chunks_searched = 0
     denom = max(len(query_terms), 1)
 
-    for doc in docs:
-        chunks = doc.get("chunks") or [
-            {"page": i + 1, "chunk_index": 0, "text": p}
-            for i, p in enumerate(doc.get("pages", []))
-        ]
-        for chunk in chunks:
-            chunks_searched += 1
-            overlap = len(query_terms & tokenize(chunk["text"]))
-            if overlap:
-                # Normalize to 0..1 so the UI can render a relevance bar
-                score = round(overlap / denom, 4)
-                scored.append((score, Citation(
-                    file_name=doc["file_name"],
-                    page=chunk.get("page", 1),
-                    chunk_index=chunk["chunk_index"],
-                    excerpt=chunk["text"][:280].replace("\n", " "),
-                    score=score,
-                )))
+    started = time.perf_counter()
+    docs = index_store.list_docs(tenant_id)
+    total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
 
-    scored.sort(key=lambda t: t[0], reverse=True)
-    top = scored[:3]
-    matches = [c for _, c in top]
-    latency_ms = max(int((time.perf_counter() - started) * 1000), 1)
+    # 1) Vector retrieval (top candidates by cosine)
+    candidates: list[dict] = []
+    try:
+        q_vec = embedder.embed_query(req.message)
+        candidates = index_store.vector_search(tenant_id, q_vec, k=20)
+    except Exception as exc:
+        log.warning("vector search failed (%s); keyword fallback", exc)
 
-    if not matches:
-        answer = "I cannot find that answer in your uploaded documents."
-    else:
-        files = ", ".join(sorted({m.file_name for m in matches}))
-        answer = (
-            f"Based on your documents ({files}), here is the relevant content. "
-            f"[Wire Vertex AI + Gemini to replace this with a real generated answer.]"
+    # 2) Fallback: if no embedded chunks, scan all chunks (keyword only)
+    if not candidates:
+        for doc in docs:
+            chunks = doc.get("chunks") or [
+                {"page": i + 1, "chunk_index": 0, "text": p}
+                for i, p in enumerate(doc.get("pages", []))
+            ]
+            for ch in chunks:
+                candidates.append({
+                    "file_name": doc["file_name"],
+                    "page": ch.get("page", 1),
+                    "chunk_index": ch.get("chunk_index", 0),
+                    "text": ch.get("text", ""),
+                    "vec_score": 0.0,
+                })
+
+    # 3) Hybrid score: blend cosine with keyword overlap
+    ranked: list[tuple[float, dict]] = []
+    for c in candidates:
+        kw = len(query_terms & tokenize(c["text"])) / denom
+        vec = float(c.get("vec_score", 0.0))
+        score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
+        if score > 0:
+            ranked.append((round(score, 4), c))
+
+    ranked.sort(key=lambda t: t[0], reverse=True)
+    top = ranked[:3]
+    top_chunks = [c for _, c in top]
+
+    answer = generator.generate(req.message, top_chunks)
+
+    citations = [
+        Citation(
+            file_name=c["file_name"],
+            page=c.get("page", 1),
+            chunk_index=c.get("chunk_index", 0),
+            excerpt=c["text"][:280].replace("\n", " "),
+            score=s,
         )
+        for s, c in top
+    ]
+    latency_ms = max(int((time.perf_counter() - started) * 1000), 1)
 
     retrieval = RetrievalTrace(
         engine=RAG_ENGINE_LABEL,
         query_terms=sorted(query_terms),
-        chunks_searched=chunks_searched,
-        candidates_ranked=len(scored),
-        top_k=len(matches),
+        chunks_searched=total_chunks,
+        candidates_ranked=len(ranked),
+        top_k=len(citations),
         max_score=top[0][0] if top else 0.0,
         latency_ms=latency_ms,
     )
 
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
-        tenant_id, len(query_terms), chunks_searched, len(scored), len(matches), latency_ms, queries_used,
+        tenant_id, len(query_terms), total_chunks, len(ranked), len(citations), latency_ms, queries_used,
     )
     return ChatResponse(
         answer=answer,
-        citations=matches,
+        citations=citations,
         retrieval=retrieval,
         tenant_id=tenant_id,
         queries_used=queries_used,

@@ -64,3 +64,44 @@ def test_quota_breaker_blocks_after_limit() -> None:
 def test_missing_auth_is_rejected() -> None:
     response = client.post("/api/chat", json={"message": "blue parking"})
     assert response.status_code == 401
+
+
+def test_response_includes_retrieval_trace_and_scores() -> None:
+    response = client.post("/api/chat", json={"message": "red elevator"}, headers=HEADERS_B)
+    body = response.json()
+    assert response.status_code == 200
+
+    r = body["retrieval"]
+    assert r["engine"]                       # engine label present
+    assert r["chunks_searched"] >= 1
+    assert r["top_k"] == len(body["citations"])
+    assert sorted(r["query_terms"]) == ["elevator", "red"]
+    assert r["latency_ms"] >= 1
+
+    # Citation carries a normalized relevance score
+    assert body["citations"][0]["score"] > 0
+
+
+def test_vector_search_ranks_embedded_chunks() -> None:
+    # Insert an embedded doc and confirm it is retrieved via the vector path
+    from backend.main import load_index, save_index as _save
+    from backend.rag import LocalEmbedder
+
+    emb = LocalEmbedder()
+    text = "The annual security audit covers firewall and access logs."
+    idx = load_index()
+    idx["documents"] = [d for d in idx["documents"] if d["tenant_id"] != "tenant-a"]
+    idx["documents"].append({
+        "tenant_id": "tenant-a",
+        "file_name": "audit.pdf",
+        "path": "local_data/uploads/tenant-a/audit.pdf",
+        "chunks": [{"page": 1, "chunk_index": 0, "text": text, "embedding": emb.embed_query(text)}],
+        "uploaded_at": "2026-05-31T00:00:00Z",
+    })
+    _save(idx)
+
+    response = client.post("/api/chat", json={"message": "security audit firewall"}, headers=HEADERS_A)
+    body = response.json()
+    assert response.status_code == 200
+    assert body["citations"][0]["file_name"] == "audit.pdf"
+    assert body["retrieval"]["candidates_ranked"] >= 1

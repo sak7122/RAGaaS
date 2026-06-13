@@ -325,10 +325,17 @@ Vendor must maintain general liability insurance of at least USD 1,000,000 per o
 
 
 def build_doc_entry(file_name: str, pages: list[tuple[int, str]], file_path: Path) -> dict:
+    from backend.rag import LocalEmbedder
+    embedder = LocalEmbedder()
     chunks: list[dict] = []
     for page_num, text in pages:
         for idx, chunk in enumerate(chunk_text(text.strip())):
-            chunks.append({"page": page_num, "chunk_index": idx, "text": chunk})
+            chunks.append({
+                "page": page_num,
+                "chunk_index": idx,
+                "text": chunk,
+                "embedding": embedder.embed_query(chunk),
+            })
     return {
         "tenant_id": TENANT_ID,
         "file_name": file_name,
