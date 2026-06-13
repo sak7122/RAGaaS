@@ -10,10 +10,16 @@ import { MembersPanel, Member } from "./components/MembersPanel";
 import { AuthForm } from "./components/AuthForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Privacy } from "./pages/Privacy";
+import { DEMO, demoFetch } from "./demoBackend";
 import "./styles.css";
 
 const API          = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 const USE_EMULATOR = import.meta.env.VITE_FIREBASE_USE_EMULATOR === "true";
+
+// In demo mode all API calls are served by an in-browser mock (no server).
+const apiFetch: typeof fetch = DEMO
+  ? ((input, init) => demoFetch(input as string, init as RequestInit)) as typeof fetch
+  : fetch;
 
 const DEV_TENANTS = [
   { label: "Demo",     email: "demo@ragaas.local" },
@@ -73,9 +79,9 @@ function App() {
     if (!tokenRef.current) return;
     try {
       const [statusRes, docsRes, membersRes] = await Promise.all([
-        fetch(`${API}/api/tenant/status`,  { headers: authHeaders() }),
-        fetch(`${API}/api/documents`,      { headers: authHeaders() }),
-        fetch(`${API}/api/tenant/members`, { headers: authHeaders() }),
+        apiFetch(`${API}/api/tenant/status`,  { headers: authHeaders() }),
+        apiFetch(`${API}/api/documents`,      { headers: authHeaders() }),
+        apiFetch(`${API}/api/tenant/members`, { headers: authHeaders() }),
       ]);
       if (statusRes.ok)  setStatus(await statusRes.json());
       if (docsRes.ok)    setDocs(await docsRes.json());
@@ -86,7 +92,7 @@ function App() {
   async function handleDelete(fileName: string) {
     setDeleting(fileName);
     try {
-      const res = await fetch(`${API}/api/documents/${encodeURIComponent(fileName)}`, {
+      const res = await apiFetch(`${API}/api/documents/${encodeURIComponent(fileName)}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -100,7 +106,7 @@ function App() {
   }
 
   async function handleInvite(email: string, role: string) {
-    const res = await fetch(`${API}/api/tenant/invite`, {
+    const res = await apiFetch(`${API}/api/tenant/invite`, {
       method: "POST",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ email, role }),
@@ -111,7 +117,7 @@ function App() {
   }
 
   async function handleRemove(uid: string) {
-    const res = await fetch(`${API}/api/tenant/members/${uid}`, {
+    const res = await apiFetch(`${API}/api/tenant/members/${uid}`, {
       method: "DELETE",
       headers: authHeaders(),
     });
@@ -123,7 +129,7 @@ function App() {
   }
 
   async function handleChangeRole(uid: string, role: string) {
-    const res = await fetch(`${API}/api/tenant/members/${uid}`, {
+    const res = await apiFetch(`${API}/api/tenant/members/${uid}`, {
       method: "PATCH",
       headers: { ...authHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
@@ -142,7 +148,7 @@ function App() {
     setMessages(next);
     setIsLoading(true);
     try {
-      const res  = await fetch(`${API}/api/chat`, {
+      const res  = await apiFetch(`${API}/api/chat`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
@@ -167,6 +173,17 @@ function App() {
       setIsLoading(false);
     }
   }
+
+  // ── Demo mode: skip Firebase, go straight online with a fake token ───────
+  useEffect(() => {
+    if (!DEMO) return;
+    tokenRef.current = "demo-token";
+    currentUidRef.current = "demo-admin";
+    setTenantEmail("you@acme.com");
+    setIdToken("demo-token");
+    setOnline(true);
+    setAuthState("Authenticated");
+  }, []);
 
   // ── Auth: dev emulator (auto sign-in) ───────────────────────────────────
   useEffect(() => {

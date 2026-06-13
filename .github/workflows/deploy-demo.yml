@@ -1,0 +1,51 @@
+###############################################################################
+# Deploy Demo to Firebase Hosting
+#
+# Manual trigger. Builds the frontend in DEMO MODE (fake in-browser backend,
+# no server needed) and deploys to Firebase Hosting. Lets you see the app live
+# before the real Cloud Run backend exists.
+#
+# Required secret:
+#   FIREBASE_TOKEN   — from:  firebase login:ci
+#                      (run locally, paste the printed token as a repo secret)
+#
+# Uses the real Firebase web app for auth UI, but all API calls are mocked.
+###############################################################################
+
+name: Deploy Demo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build (demo) + deploy to Hosting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (DEMO mode)
+        run: npm run build
+        env:
+          VITE_DEMO_MODE:             "true"
+          VITE_FIREBASE_USE_EMULATOR: "false"
+          VITE_API_URL:               "https://demo-no-backend.invalid"
+          VITE_FIREBASE_PROJECT_ID:   ${{ secrets.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_API_KEY:      ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
+
+      - name: Deploy to Firebase Hosting
+        uses: w9jds/firebase-action@v13.23.1
+        with:
+          args: deploy --only hosting --project ${{ secrets.FIREBASE_PROJECT_ID }}
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}

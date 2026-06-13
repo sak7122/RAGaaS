@@ -40,6 +40,24 @@ variable "cors_origin_regex" {
   default     = "https://ragaas-af876\\.web\\.app"
 }
 
+variable "billing_account" {
+  type        = string
+  description = "Billing account ID (XXXXXX-XXXXXX-XXXXXX) for the budget alert. Leave empty to skip."
+  default     = ""
+}
+
+variable "alert_email" {
+  type        = string
+  description = "Email that receives budget threshold alerts"
+  default     = "f20212477g@alumni.bits-pilani.ac.in"
+}
+
+variable "budget_amount_usd" {
+  type        = number
+  description = "Monthly budget amount in USD"
+  default     = 5
+}
+
 variable "cloud_run_min_instances" {
   type        = number
   description = "Minimum Cloud Run instances (0 = scale to zero)"

@@ -30,6 +30,15 @@ module "wif" {
   depends_on       = [module.iam]
 }
 
+module "budget" {
+  source          = "./modules/budget"
+  project_id      = var.project_id
+  billing_account = var.billing_account
+  alert_email     = var.alert_email
+  amount_usd      = var.budget_amount_usd
+  depends_on      = [module.apis]
+}
+
 module "firebase" {
   source               = "./modules/firebase"
   project_id           = var.project_id

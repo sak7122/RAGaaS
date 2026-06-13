@@ -1,0 +1,82 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Demo backend — canned in-browser responses so the app works with NO server.
+// Enabled by VITE_DEMO_MODE=true. Lets the hosted frontend be fully clickable
+// before the real Cloud Run backend exists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEMO = import.meta.env.VITE_DEMO_MODE === "true";
+
+type DocMeta = { file_name: string; chunks: number; uploaded_at: string };
+type Member = { uid: string; email: string; role: string; invited_at: string; joined_at: string | null };
+
+const now = () => new Date().toISOString();
+
+const demoDocs: DocMeta[] = [
+  { file_name: "Q3_Earnings_Report.pdf", chunks: 48, uploaded_at: now() },
+  { file_name: "Employee_Handbook.pdf", chunks: 132, uploaded_at: now() },
+  { file_name: "Product_Roadmap_2026.pdf", chunks: 27, uploaded_at: now() },
+];
+
+const demoMembers: Member[] = [
+  { uid: "demo-admin", email: "you@acme.com", role: "admin", invited_at: now(), joined_at: now() },
+  { uid: "demo-uploader", email: "sam@acme.com", role: "uploader", invited_at: now(), joined_at: now() },
+  { uid: "demo-viewer", email: "alex@acme.com", role: "viewer", invited_at: now(), joined_at: null },
+];
+
+let queriesUsed = 42;
+
+const demoStatus = () => ({
+  tenant_id: "acme-corp",
+  queries_used: queriesUsed,
+  query_limit: 1000,
+  documents: demoDocs.length,
+});
+
+function cannedAnswer(question: string) {
+  queriesUsed += 1;
+  return {
+    answer:
+      `Based on your documents, here's what I found regarding "${question.slice(0, 60)}": ` +
+      "Q3 revenue grew 18% YoY to $4.2M, driven by enterprise expansion. The roadmap " +
+      "prioritizes the multi-region rollout for Q1 2026. (This is a demo response — wire " +
+      "the real backend to replace it with live RAG answers.)",
+    citations: [
+      { file_name: "Q3_Earnings_Report.pdf", page: 4, chunk_index: 12, excerpt: "Total revenue for the third quarter reached $4.2M, an 18% increase year over year, led by enterprise segment growth." },
+      { file_name: "Product_Roadmap_2026.pdf", page: 2, chunk_index: 3, excerpt: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
+    ],
+    tenant_id: "acme-corp",
+    queries_used: queriesUsed,
+    query_limit: 1000,
+  };
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Drop-in replacement for fetch() — matches on the path suffix.
+export async function demoFetch(input: string, init?: RequestInit): Promise<Response> {
+  const url = new URL(input, "http://demo.local");
+  const path = url.pathname;
+  const method = (init?.method ?? "GET").toUpperCase();
+
+  // Small latency so loading states are visible
+  await new Promise((r) => setTimeout(r, 350));
+
+  if (path.endsWith("/api/tenant/status")) return json(demoStatus());
+  if (path.endsWith("/api/documents") && method === "GET") return json(demoDocs);
+  if (path.includes("/api/documents/") && method === "DELETE") return json({ ok: true });
+  if (path.endsWith("/api/tenant/members") && method === "GET") return json(demoMembers);
+  if (path.endsWith("/api/tenant/invite")) return json({ ok: true, uid: "demo-invited" }, 201);
+  if (path.includes("/api/tenant/members/")) return json({ ok: true });
+
+  if (path.endsWith("/api/chat") && method === "POST") {
+    const q = init?.body ? (JSON.parse(init.body as string).message as string) : "";
+    return json(cannedAnswer(q));
+  }
+
+  return json({ detail: "Demo: endpoint not mocked" }, 404);
+}
