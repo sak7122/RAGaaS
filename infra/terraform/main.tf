@@ -22,13 +22,12 @@ module "iam" {
 }
 
 module "wif" {
-  source            = "./modules/wif"
-  project_id        = var.project_id
-  project_number    = data.google_project.project.number
-  github_repo       = var.github_repo
-  deployer_sa_email = module.iam.deployer_sa_email
-  deployer_sa_name  = module.iam.deployer_sa_name
-  depends_on        = [module.iam]
+  source           = "./modules/wif"
+  project_id       = var.project_id
+  project_number   = data.google_project.project.number
+  github_repo      = var.github_repo
+  deployer_sa_name = module.iam.deployer_sa_name
+  depends_on       = [module.iam]
 }
 
 module "storage" {

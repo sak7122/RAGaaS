@@ -1,7 +1,6 @@
 variable "project_id" { type = string }
 variable "project_number" { type = string }
 variable "github_repo" { type = string }
-variable "deployer_sa_email" { type = string }
 variable "deployer_sa_name" { type = string }
 
 # ── Workload Identity Pool ────────────────────────────────────────────────────

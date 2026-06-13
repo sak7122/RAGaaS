@@ -47,16 +47,19 @@ variable "cloud_run_min_instances" {
 }
 
 variable "cloud_run_max_instances" {
-  type    = number
-  default = 10
+  type        = number
+  description = "Maximum Cloud Run instances"
+  default     = 10
 }
 
 variable "cloud_run_memory" {
-  type    = string
-  default = "512Mi"
+  type        = string
+  description = "Memory limit per Cloud Run instance"
+  default     = "512Mi"
 }
 
 variable "cloud_run_cpu" {
-  type    = string
-  default = "1"
+  type        = string
+  description = "vCPU limit per Cloud Run instance"
+  default     = "1"
 }

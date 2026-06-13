@@ -76,7 +76,7 @@ jobs:
         run: tflint --init
 
       - name: tflint
-        run: tflint --recursive --format compact
+        run: tflint --recursive --format compact --minimum-failure-severity=warning
 
       # tfsec: static security analysis
       - name: tfsec

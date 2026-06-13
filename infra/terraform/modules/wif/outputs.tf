@@ -4,5 +4,6 @@ output "provider_name" {
 }
 
 output "pool_name" {
-  value = google_iam_workload_identity_pool.github.name
+  description = "Full WIF pool resource name"
+  value       = google_iam_workload_identity_pool.github.name
 }
