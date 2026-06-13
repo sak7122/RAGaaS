@@ -84,7 +84,7 @@ if ($existing) {
     OK "Created $SA_EMAIL"
 }
 
-# --- [3] IAM roles ----------------------------------------------------------
+# --- [3] IAM roles ------s---------------------------------------------------
 Step "3/7 Granting IAM roles"
 $roles = @(
     "roles/run.admin",
