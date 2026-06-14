@@ -33,9 +33,10 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete }: UploadBar
 
   function processFiles(files: File[]) {
     const MAX_BYTES = 50 * 1024 * 1024;
+    const ALLOWED = [".pdf", ".docx"];
     const newItems: QueueItem[] = files.slice(0, 10).map((file) => {
-      if (!file.name.toLowerCase().endsWith(".pdf"))
-        return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "PDF only" };
+      if (!ALLOWED.some((ext) => file.name.toLowerCase().endsWith(ext)))
+        return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "PDF or .docx only" };
       if (file.size > MAX_BYTES)
         return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "Exceeds 50 MB" };
       return { id: uid(), file, status: "queued" as FileStatus, progress: 0 };
@@ -136,14 +137,14 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete }: UploadBar
           {active.length > 0
             ? `${active.filter((i) => i.status === "uploading").length} uploading…`
             : dragging
-            ? "Drop PDFs here"
-            : "Upload PDFs"}
+            ? "Drop files here"
+            : "Upload documents"}
         </label>
 
         <input
           id="pdf-upload"
           type="file"
-          accept="application/pdf"
+          accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           multiple
           disabled={disabled}
           onChange={handleChange}
@@ -151,7 +152,7 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete }: UploadBar
         />
 
         <span className="upload-zone-hint">
-          or drag &amp; drop · PDF · max 50 MB · up to 10 files
+          or drag &amp; drop · PDF or Word (.docx) · max 50 MB · up to 10 files
         </span>
 
         <AnimatePresence>

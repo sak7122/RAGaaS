@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+from docx import Document
 
 from backend.config import config
 from backend.firebase_services import (
@@ -44,6 +45,7 @@ UPLOAD_DIR     = DATA_DIR / "uploads"
 INDEX_FILE     = DATA_DIR / "index.json"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 PDF_MAGIC      = b"%PDF"
+ZIP_MAGIC      = b"PK\x03\x04"  # docx is a zip container — disambiguate by extension
 VALID_ROLES    = {"admin", "uploader", "viewer"}
 # Retrieval engine label surfaced in the UI. Accurate for the DIY hybrid path;
 # set RAG_ENGINE_LABEL="Vertex AI Search" if you migrate to managed retrieval.
@@ -207,7 +209,7 @@ def save_index(index: dict) -> None:
     INDEX_FILE.write_text(json.dumps(index, indent=2), encoding="utf-8")
 
 
-# ── PDF helpers ───────────────────────────────────────────────────────────────
+# ── Document helpers ──────────────────────────────────────────────────────────
 def safe_filename(name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._")
     return cleaned or "upload.pdf"
@@ -234,7 +236,7 @@ def chunk_text(text: str, chunk_size: int = 512) -> list[str]:
     return chunks or [""]
 
 
-def extract_chunks(content: bytes) -> list[dict]:
+def _extract_pdf_chunks(content: bytes) -> list[dict]:
     try:
         reader = PdfReader(io.BytesIO(content))
         result = []
@@ -259,6 +261,48 @@ def extract_chunks(content: bytes) -> list[dict]:
             status_code=400,
             detail="Could not parse PDF — file may be corrupted or encrypted",
         )
+
+
+def _extract_docx_chunks(content: bytes) -> list[dict]:
+    try:
+        doc = Document(io.BytesIO(content))
+        # Paragraphs + table cells — docx has no reliable page boundaries, so page=1.
+        parts = [p.text for p in doc.paragraphs]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.extend(cell.text for cell in row.cells)
+        full_text = "\n".join(t for t in parts if t and t.strip())
+        result = [
+            {"page": 1, "chunk_index": idx, "text": chunk}
+            for idx, chunk in enumerate(chunk_text(full_text))
+            if chunk.strip()
+        ]
+        if not result:
+            raise HTTPException(
+                status_code=422,
+                detail="No text found in this Word document. Upload a document that contains text.",
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("DOCX parse failed: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail="Could not parse Word document — file may be corrupted. Legacy .doc isn't supported; save as .docx.",
+        )
+
+
+def extract_chunks(content: bytes, file_name: str) -> list[dict]:
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    if content[:4] == PDF_MAGIC:
+        return _extract_pdf_chunks(content)
+    if ext == "docx" and content[:4] == ZIP_MAGIC:
+        return _extract_docx_chunks(content)
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported file type. Upload a PDF or a Word (.docx) document.",
+    )
 
 
 def tokenize(text: str) -> set[str]:
@@ -348,13 +392,11 @@ async def upload_document(
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
-    if content[:4] != PDF_MAGIC:
-        raise HTTPException(status_code=400, detail="File is not a valid PDF")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename required")
 
     file_name = safe_filename(file.filename)
-    chunks = extract_chunks(content)
+    chunks = extract_chunks(content, file_name)  # PDF or .docx; rejects others
     uri = storage.upload(tenant_id, file_name, content)
 
     # Embed each chunk so it is retrievable by vector similarity
