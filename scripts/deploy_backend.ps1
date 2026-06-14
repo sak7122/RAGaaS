@@ -1,4 +1,4 @@
-# Deploy FastAPI backend to Google Cloud Run
+# Deplloy FastAPI backend to Google Cloud Run
 $serviceName = "ragaas-backend"
 $region      = "us-central1"
 $projectId   = $env:GCP_PROJECT_ID ?? "genaiacademy-496218"

@@ -3,7 +3,7 @@
 #
 # Triggers:
 #   - push/PR touching infra/terraform/** → lint + validate + plan (auto)
-#   - workflow_dispatch → apply (MANUAL, type "apply" to confirm)
+#   - workflow_dispatch → lint + plan always; apply only if action == "apply"
 #
 # Required GitHub Secrets (same as app pipeline):
 #   GCP_WORKLOAD_IDENTITY_PROVIDER   from terraform output wif_provider
@@ -15,8 +15,8 @@
 #
 # Stages:
 #   1. lint-validate  — fmt, init (no backend), validate, tflint, tfsec
-#   2. plan           — init (real backend), plan, posts diff to PR comment
-#   3. apply          — MANUAL ONLY (workflow_dispatch + confirm input == "apply")
+#   2. plan           — runs on every event (push/PR/dispatch), posts PR diff
+#   3. apply          — dispatch ONLY, when action input == "apply"
 ###############################################################################
 
 name: Infrastructure
@@ -33,10 +33,14 @@ on:
       - 'infra/terraform/**'
   workflow_dispatch:
     inputs:
-      confirm_apply:
-        description: 'Type exactly "apply" to run terraform apply'
+      action:
+        description: 'plan = preview only · apply = provision infra'
         required: true
-        type: string
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
 
 defaults:
   run:
@@ -90,7 +94,6 @@ jobs:
     name: Plan
     runs-on: ubuntu-latest
     needs: lint-validate
-    if: github.event_name != 'workflow_dispatch'
     permissions:
       contents: read
       id-token: write
@@ -178,10 +181,10 @@ jobs:
   apply:
     name: Apply (Manual)
     runs-on: ubuntu-latest
-    needs: lint-validate
-    if: |
+    needs: [lint-validate, plan]
+    if: >-
       github.event_name == 'workflow_dispatch' &&
-      github.event.inputs.confirm_apply == 'apply'
+      github.event.inputs.action == 'apply'
     environment: production
     permissions:
       contents: read
