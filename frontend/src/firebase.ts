@@ -7,6 +7,7 @@ import {
   onIdTokenChanged,
   signInWithEmailAndPassword,
   signOut,
+  updateProfile,
   User,
   UserCredential,
 } from "firebase/auth";
@@ -43,8 +44,16 @@ export async function signInWithPassword(email: string, password: string): Promi
   return signInWithEmailAndPassword(auth, email, password);
 }
 
-export async function signUpWithPassword(email: string, password: string): Promise<UserCredential> {
-  return createUserWithEmailAndPassword(auth, email, password);
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<UserCredential> {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  if (displayName) {
+    try { await updateProfile(cred.user, { displayName }); } catch { /* non-fatal */ }
+  }
+  return cred;
 }
 
 export function signOutUser(): Promise<void> {
@@ -60,17 +69,24 @@ export function watchAuth(cb: (user: User | null) => void): () => void {
 // Map raw Firebase error codes to human messages.
 export function friendlyAuthError(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
+  // Surface the real code in the console so misconfig is diagnosable.
+  if (code) console.error("[auth]", code, err);
   const map: Record<string, string> = {
-    "auth/invalid-email":          "That email address doesn't look right.",
-    "auth/user-not-found":         "No account found with that email.",
-    "auth/wrong-password":         "Incorrect password. Try again.",
-    "auth/invalid-credential":     "Email or password is incorrect.",
-    "auth/email-already-in-use":   "An account with this email already exists.",
-    "auth/weak-password":          "Password must be at least 6 characters.",
-    "auth/too-many-requests":      "Too many attempts. Wait a moment and retry.",
-    "auth/network-request-failed": "Network error. Check your connection.",
+    "auth/invalid-email":            "That email address doesn't look right.",
+    "auth/user-not-found":           "No account found with that email.",
+    "auth/wrong-password":           "Incorrect password. Try again.",
+    "auth/invalid-credential":       "Email or password is incorrect.",
+    "auth/email-already-in-use":     "An account with this email already exists.",
+    "auth/weak-password":            "Password must be at least 6 characters.",
+    "auth/too-many-requests":        "Too many attempts. Wait a moment and retry.",
+    "auth/network-request-failed":   "Network error. Check your connection.",
+    // Misconfiguration — Email/Password provider not enabled in Firebase console.
+    "auth/operation-not-allowed":    "Email sign-up isn't enabled yet. Enable Email/Password in Firebase → Authentication → Sign-in method.",
+    "auth/configuration-not-found":  "Auth isn't configured. Enable Email/Password in Firebase → Authentication → Sign-in method.",
+    "auth/admin-restricted-operation": "Sign-ups are restricted on this project. Contact the administrator.",
+    "auth/invalid-api-key":          "App is misconfigured (invalid API key). Check the VITE_FIREBASE_* values.",
   };
-  return map[code] ?? "Something went wrong. Please try again.";
+  return map[code] ?? `Something went wrong${code ? ` (${code})` : ""}. Please try again.`;
 }
 
 // Used only in dev/emulator mode — auto-creates accounts with fixed password

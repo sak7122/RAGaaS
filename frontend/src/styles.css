@@ -1612,3 +1612,39 @@ html {
 
 .topq-bar-fill { display: block; height: 100%; border-radius: var(--r-pill); background: var(--grad-primary); }
 .topq-bar-fill.low { background: var(--red); }
+
+/* ─── Sign-up form ─────────────────────────────────────────────────────────── */
+.auth-card-wide { max-width: 440px; }
+
+.auth-row { display: flex; gap: var(--sp-sm); }
+.auth-row .auth-field { flex: 1; min-width: 0; }
+
+.auth-field.invalid {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(255,69,58,0.12);
+}
+
+/* Password strength meter */
+.pw-strength { display: flex; align-items: center; gap: var(--sp-sm); }
+.pw-bars { display: flex; gap: 3px; flex: 1; }
+.pw-bar {
+  flex: 1; height: 4px; border-radius: var(--r-pill);
+  background: var(--hairline); transition: background 0.2s;
+}
+.pw-bar.s1, .pw-bar.s2 { background: var(--red); }
+.pw-bar.s3 { background: var(--orange); }
+.pw-bar.s4 { background: var(--yellow); }
+.pw-bar.s5 { background: var(--green); }
+
+.pw-label { font-size: 11px; font-weight: 600; min-width: 56px; text-align: right; }
+.pw-label.s1, .pw-label.s2 { color: var(--red); }
+.pw-label.s3 { color: var(--orange); }
+.pw-label.s4 { color: #b8860b; }
+.pw-label.s5 { color: var(--green); }
+
+/* Agreement checkbox */
+.auth-check {
+  display: flex; align-items: flex-start; gap: var(--sp-xs);
+  font-size: 12px; color: var(--ink-48); line-height: 1.4; cursor: pointer;
+}
+.auth-check input { margin-top: 2px; accent-color: var(--primary); cursor: pointer; }

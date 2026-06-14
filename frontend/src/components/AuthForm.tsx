@@ -3,26 +3,25 @@ import { motion } from "framer-motion";
 import { Lock, Mail, Eye, EyeOff, Loader2 } from "lucide-react";
 
 interface AuthFormProps {
-  onAuth: (email: string, password: string, isNew: boolean) => Promise<void>;
+  onSignIn: (email: string, password: string) => Promise<void>;
+  onSwitchToSignUp: () => void;
   error: string;
 }
 
-export function AuthForm({ onAuth, error }: AuthFormProps) {
+export function AuthForm({ onSignIn, onSwitchToSignUp, error }: AuthFormProps) {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [isNew, setIsNew]       = useState(false);
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
 
-  const pwTooShort = isNew && password.length > 0 && password.length < 6;
-  const canSubmit = !!email && !!password && !pwTooShort && !loading;
+  const canSubmit = !!email && !!password && !loading;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setLoading(true);
     try {
-      await onAuth(email, password, isNew);
+      await onSignIn(email, password);
     } finally {
       setLoading(false);
     }
@@ -41,10 +40,8 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
           <span className="auth-brand-name">RAGaaS</span>
         </div>
 
-        <h2 className="auth-title">{isNew ? "Create your account" : "Welcome back"}</h2>
-        <p className="auth-sub">
-          {isNew ? "Start asking questions about your documents" : "Sign in to your knowledge base"}
-        </p>
+        <h2 className="auth-title">Welcome back</h2>
+        <p className="auth-sub">Sign in to your knowledge base</p>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="auth-field">
@@ -69,7 +66,7 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete={isNew ? "new-password" : "current-password"}
+              autoComplete="current-password"
               required
             />
             <button
@@ -83,9 +80,6 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
             </button>
           </div>
 
-          {pwTooShort && (
-            <div className="auth-hint">Password must be at least 6 characters.</div>
-          )}
           {error && (
             <motion.div
               className="error-banner"
@@ -97,18 +91,12 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
           )}
 
           <button type="submit" className="btn-primary auth-submit" disabled={!canSubmit}>
-            {loading ? (
-              <Loader2 size={16} className="auth-spin" />
-            ) : isNew ? "Create account" : "Sign in"}
+            {loading ? <Loader2 size={16} className="auth-spin" /> : "Sign in"}
           </button>
         </form>
 
-        <button
-          type="button"
-          className="auth-toggle"
-          onClick={() => setIsNew((v) => !v)}
-        >
-          {isNew ? "Already have an account? Sign in" : "No account? Create one"}
+        <button type="button" className="auth-toggle" onClick={onSwitchToSignUp}>
+          No account? Create one
         </button>
 
         <p className="auth-privacy">

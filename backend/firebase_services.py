@@ -255,18 +255,23 @@ def create_member_store() -> MemberStore:
 
 # ── Token verification ────────────────────────────────────────────────────────
 def tenant_from_claims(decoded: dict) -> str:
+    # Explicit tenant claim (set by an admin when joining a team) wins.
     tenant_id = decoded.get("tenant_id")
     if isinstance(tenant_id, str) and tenant_id:
         return tenant_id
+    # Known seeded emails (dev/demo accounts).
     email = decoded.get("email")
     if isinstance(email, str) and email in TENANT_EMAIL_MAP:
         return TENANT_EMAIL_MAP[email]
     if os.getenv("RAGAAS_ENV", "development") == "development":
         return "tenant-demo"
-    raise HTTPException(
-        status_code=403,
-        detail="No tenant assigned to this account — contact your administrator",
-    )
+    # Self-serve: every new account gets its OWN isolated workspace keyed by uid.
+    # Tenant isolation holds (each user sees only their workspace); an admin can
+    # later assign a shared tenant_id custom claim to merge users into a team.
+    uid = str(decoded.get("uid") or decoded.get("sub") or "")
+    if uid:
+        return f"ws-{uid[:24]}"
+    raise HTTPException(status_code=403, detail="Invalid token: no user id")
 
 
 def verify_firebase_token(id_token: str, member_store: MemberStore | None = None) -> Principal:

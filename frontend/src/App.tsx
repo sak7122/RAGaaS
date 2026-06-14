@@ -17,6 +17,7 @@ import { DocumentList, DocumentMeta } from "./components/DocumentList";
 import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { AuthForm } from "./components/AuthForm";
+import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Privacy } from "./pages/Privacy";
 import { DEMO, demoFetch } from "./demoBackend";
@@ -80,6 +81,7 @@ function App() {
   const [view, setView]               = useState<"chat" | "insights">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
+  const [authMode, setAuthMode]       = useState<"signin" | "signup">("signin");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
 
@@ -284,11 +286,23 @@ function App() {
   }, []);
 
   // ── Auth: prod sign-in/up (listener above sets state on success) ────────
-  const handleProdAuth = useCallback(async (email: string, password: string, isNew: boolean) => {
+  const handleSignIn = useCallback(async (email: string, password: string) => {
     setAuthState("Signing in…");
     try {
-      if (isNew) await signUpWithPassword(email, password);
-      else await signInWithPassword(email, password);
+      await signInWithPassword(email, password);
+      // watchAuth fires and populates session state.
+    } catch (err: unknown) {
+      setAuthState(friendlyAuthError(err));
+    }
+  }, []);
+
+  const handleSignUp = useCallback(async (email: string, password: string, profile: SignUpProfile) => {
+    setAuthState("Signing in…");
+    try {
+      await signUpWithPassword(email, password, profile.name);
+      // Workspace name is the user's label for their new tenant; the backend
+      // keys the tenant by uid (private workspace). Persist for display.
+      try { localStorage.setItem("ragaas:workspace", profile.workspace); } catch { /* ignore */ }
       // watchAuth fires and populates session state.
     } catch (err: unknown) {
       setAuthState(friendlyAuthError(err));
@@ -331,10 +345,19 @@ function App() {
           </div>
         </nav>
         <ErrorBoundary>
-          <AuthForm
-            onAuth={handleProdAuth}
-            error={STATUS_WORDS.has(authState) ? "" : authState}
-          />
+          {authMode === "signup" ? (
+            <SignUpForm
+              onSignUp={handleSignUp}
+              onBackToSignIn={() => { setAuthMode("signin"); setAuthState("idle"); }}
+              error={STATUS_WORDS.has(authState) ? "" : authState}
+            />
+          ) : (
+            <AuthForm
+              onSignIn={handleSignIn}
+              onSwitchToSignUp={() => { setAuthMode("signup"); setAuthState("idle"); }}
+              error={STATUS_WORDS.has(authState) ? "" : authState}
+            />
+          )}
         </ErrorBoundary>
       </div>
     );
