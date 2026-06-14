@@ -82,6 +82,28 @@ def test_response_includes_retrieval_trace_and_scores() -> None:
     assert body["citations"][0]["score"] > 0
 
 
+def test_insights_detect_knowledge_gaps() -> None:
+    # tenant B has a doc about "red elevator access" only.
+    # Ask an unanswerable question repeatedly → should surface as a gap.
+    for _ in range(3):
+        client.post("/api/chat", json={"message": "what is the refund policy"}, headers=HEADERS_B)
+    # Ask an answerable one
+    client.post("/api/chat", json={"message": "red elevator"}, headers=HEADERS_B)
+
+    res = client.get("/api/insights", headers=HEADERS_B)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_queries"] >= 4
+    gap_questions = [g["question"].lower() for g in body["gaps"]]
+    assert any("refund" in q for q in gap_questions)
+    assert body["gaps"][0]["count"] >= 3  # asked 3x, unanswered → top gap
+
+
+def test_insights_requires_admin() -> None:
+    # viewer-less path: missing auth is rejected
+    assert client.get("/api/insights").status_code == 401
+
+
 def test_vector_search_ranks_embedded_chunks() -> None:
     # Insert an embedded doc and confirm it is retrieved via the vector path
     from backend.main import load_index, save_index as _save

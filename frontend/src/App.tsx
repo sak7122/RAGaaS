@@ -7,6 +7,7 @@ import { UploadBar } from "./components/UploadBar";
 import { ChatWindow, ChatMessage } from "./components/ChatWindow";
 import { DocumentList, DocumentMeta } from "./components/DocumentList";
 import { MembersPanel, Member } from "./components/MembersPanel";
+import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { AuthForm } from "./components/AuthForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Privacy } from "./pages/Privacy";
@@ -68,6 +69,7 @@ function App() {
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [members, setMembers]         = useState<Member[]>([]);
+  const [view, setView]               = useState<"chat" | "insights">("chat");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
 
@@ -136,6 +138,16 @@ function App() {
     });
     if (res.ok) {
       setMembers((prev) => prev.map((m) => m.uid === uid ? { ...m, role: role as Member["role"] } : m));
+    }
+  }
+
+  async function fetchInsights(): Promise<Insights | null> {
+    try {
+      const res = await apiFetch(`${API}/api/insights`, { headers: authHeaders() });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
     }
   }
 
@@ -298,6 +310,22 @@ function App() {
             Local Dev
           </motion.span>
         )}
+        <div className="nav-tabs">
+          <button
+            type="button"
+            className={`nav-tab${view === "chat" ? " active" : ""}`}
+            onClick={() => setView("chat")}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={`nav-tab${view === "insights" ? " active" : ""}`}
+            onClick={() => setView("insights")}
+          >
+            Insights
+          </button>
+        </div>
         <span className="nav-spacer" />
         <motion.div
           className="nav-status"
@@ -338,23 +366,31 @@ function App() {
       </ErrorBoundary>
 
       <main className="workspace">
-        <UploadBar
-          apiUrl={API}
-          authToken={idToken}
-          disabled={!online}
-          onComplete={refreshStatus}
-        />
-        <ErrorBoundary>
-          <ChatWindow
-            messages={messages}
-            question={question}
-            isLoading={isLoading}
-            onQuestionChange={setQuestion}
-            onSend={handleSend}
-            onAsk={sendMessage}
-            disabled={!online}
-          />
-        </ErrorBoundary>
+        {view === "insights" ? (
+          <ErrorBoundary>
+            <InsightsPanel fetchInsights={fetchInsights} />
+          </ErrorBoundary>
+        ) : (
+          <>
+            <UploadBar
+              apiUrl={API}
+              authToken={idToken}
+              disabled={!online}
+              onComplete={refreshStatus}
+            />
+            <ErrorBoundary>
+              <ChatWindow
+                messages={messages}
+                question={question}
+                isLoading={isLoading}
+                onQuestionChange={setQuestion}
+                onSend={handleSend}
+                onAsk={sendMessage}
+                disabled={!online}
+              />
+            </ErrorBoundary>
+          </>
+        )}
       </main>
     </div>
   );

@@ -63,6 +63,21 @@ test("suggestion chip submits a query", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Hybrid Vector Search/i })).toBeVisible();
 });
 
+test("insights dashboard shows gaps + top questions", async ({ page }) => {
+  await page.getByRole("button", { name: "Insights", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "Knowledge Insights" })).toBeVisible();
+  // Stat cards
+  await expect(page.getByText("Questions asked")).toBeVisible();
+  await expect(page.getByText("Avg confidence")).toBeVisible();
+  // Knowledge gaps section + a flagged gap
+  await expect(page.getByText("Knowledge gaps")).toBeVisible();
+  await expect(page.getByText("What is the refund policy?").first()).toBeVisible();
+  await expect(page.getByText(/asked 23×/)).toBeVisible();
+  // Top questions section
+  await expect(page.getByText("Top questions")).toBeVisible();
+});
+
 test("quota counter increments after a query", async ({ page }) => {
   const usage = page.getByText(/\/ 1,000 queries today/);
   await expect(usage).toContainText("42 / 1,000");

@@ -27,6 +27,7 @@ from backend.firebase_services import (
 from backend.storage import create_storage_backend
 from backend.index_store import create_index_store
 from backend.rag import create_embedder, create_generator
+from backend.insights import create_insights_store
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -78,6 +79,7 @@ storage       = create_storage_backend(config.env, UPLOAD_DIR, config.gcs_bucket
 index_store   = create_index_store(config.env, INDEX_FILE)
 embedder      = create_embedder()
 generator     = create_generator()
+insights_store = create_insights_store(config.env)
 log.info("startup env=%s emulator=%s embedder=%s generator=%s",
          config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__)
 
@@ -125,6 +127,28 @@ class DocumentMeta(BaseModel):
     file_name: str
     chunks: int
     uploaded_at: str
+
+
+class QuestionStat(BaseModel):
+    question: str
+    count: int
+    avg_score: float
+
+
+class KnowledgeGap(BaseModel):
+    question: str
+    count: int
+    best_score: float
+    avg_score: float
+
+
+class InsightsResponse(BaseModel):
+    total_queries: int
+    avg_confidence: float
+    answered_rate: float
+    top_questions: list[QuestionStat]
+    gaps: list[KnowledgeGap]
+    window: int
 
 
 class MemberOut(BaseModel):
@@ -395,6 +419,9 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         latency_ms=latency_ms,
     )
 
+    # Record for knowledge analytics + gap detection
+    insights_store.record(tenant_id, req.message, retrieval.max_score)
+
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
         tenant_id, len(query_terms), total_chunks, len(ranked), len(citations), latency_ms, queries_used,
@@ -407,6 +434,14 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         queries_used=queries_used,
         query_limit=QUERY_LIMIT,
     )
+
+
+# ── Routes: insights (knowledge analytics + gap detection) ────────────────────
+@app.get("/api/insights", response_model=InsightsResponse)
+def get_insights(principal: Annotated[Principal, Depends(principal_from_auth)]) -> InsightsResponse:
+    require_role(principal, "admin")
+    data = insights_store.summary(principal.tenant_id)
+    return InsightsResponse(**data)
 
 
 # ── Routes: members ───────────────────────────────────────────────────────────
@@ -504,5 +539,6 @@ def reset_dev_state() -> dict:
     if config.env == "production":
         raise HTTPException(status_code=403, detail="Not available in production")
     usage_store.reset()
-    log.info("quota reset by dev endpoint")
+    insights_store.reset()
+    log.info("quota + insights reset by dev endpoint")
     return {"ok": True}

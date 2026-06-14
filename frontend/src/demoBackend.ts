@@ -90,5 +90,26 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
     return json(cannedAnswer(q));
   }
 
+  if (path.endsWith("/api/insights")) {
+    return json({
+      total_queries: 184,
+      avg_confidence: 0.61,
+      answered_rate: 0.72,
+      window: 1000,
+      top_questions: [
+        { question: "What is the refund policy?", count: 23, avg_score: 0.18 },
+        { question: "How do I reset my password?", count: 19, avg_score: 0.81 },
+        { question: "What are the Q3 revenue numbers?", count: 14, avg_score: 0.92 },
+        { question: "When does the roadmap ship SSO?", count: 11, avg_score: 0.74 },
+        { question: "What is the cancellation window?", count: 9, avg_score: 0.12 },
+      ],
+      gaps: [
+        { question: "What is the refund policy?", count: 23, best_score: 0.21, avg_score: 0.18 },
+        { question: "What is the cancellation window?", count: 9, best_score: 0.15, avg_score: 0.12 },
+        { question: "Do you offer enterprise SLAs?", count: 6, best_score: 0.19, avg_score: 0.14 },
+      ],
+    });
+  }
+
   return json({ detail: "Demo: endpoint not mocked" }, 404);
 }
