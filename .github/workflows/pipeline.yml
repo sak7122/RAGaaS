@@ -177,7 +177,13 @@ jobs:
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},\
           FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},\
           GCS_BUCKET=${{ secrets.GCS_BUCKET }},\
-          CORS_ORIGIN_REGEX=${{ secrets.CORS_ORIGIN_REGEX }}" \
+          CORS_ORIGIN_REGEX=${{ secrets.CORS_ORIGIN_REGEX }},\
+          APP_BASE_URL=${{ secrets.APP_BASE_URL }},\
+          SMTP_HOST=${{ secrets.SMTP_HOST }},\
+          SMTP_PORT=${{ secrets.SMTP_PORT }},\
+          SMTP_USER=${{ secrets.SMTP_USER }},\
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }},\
+          SMTP_FROM=${{ secrets.SMTP_FROM }}" \
             --format "value(status.url)")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Backend deployed to: $URL"

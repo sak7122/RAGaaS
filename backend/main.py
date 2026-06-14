@@ -30,6 +30,7 @@ from backend.index_store import create_index_store
 from backend.rag import create_embedder, create_generator
 from backend.insights import create_insights_store
 from backend.tenant_profile import create_tenant_profile_store, prettify
+from backend.mailer import send_invite_email, smtp_configured
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -545,10 +546,18 @@ def invite_member(
     member = MemberRecord(uid=uid, email=body.email, role=body.role, invited_at=now, joined_at=None)
     member_store.add_member(tenant_id, member)
 
-    # Dev: log invite link instead of sending email
-    invite_link = f"http://localhost:5173/?invite={uid}&tenant={tenant_id}"
-    log.info("invite tenant=%s email=%s role=%s link=%s", tenant_id, body.email, body.role, invite_link)
-    return {"ok": True, "uid": uid, "invite_link": invite_link}
+    invite_link = f"{config.app_base_url}/?invite={uid}&tenant={tenant_id}"
+    tenant_name = tenant_profile_store.get_name(tenant_id) or prettify(tenant_id)
+    inviter = principal.email or "A teammate"
+
+    # Send a real email if SMTP is configured; otherwise return the link so
+    # the admin can share it manually (dev / unconfigured prod).
+    email_sent = send_invite_email(
+        to_email=body.email, invite_link=invite_link,
+        tenant_name=tenant_name, inviter=inviter, role=body.role,
+    )
+    log.info("invite tenant=%s email=%s role=%s emailed=%s", tenant_id, body.email, body.role, email_sent)
+    return {"ok": True, "uid": uid, "invite_link": invite_link, "email_sent": email_sent}
 
 
 @app.patch("/api/tenant/members/{uid}")

@@ -130,6 +130,7 @@ function App() {
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail ?? "Invite failed");
     await refreshStatus();
+    return body as { email_sent?: boolean; invite_link?: string };
   }
 
   async function handleRemove(uid: string) {

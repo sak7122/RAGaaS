@@ -13,6 +13,7 @@ class Config:
     gcp_project_id: str
     cors_origin_regex: str
     gcs_bucket: str             # GCS2 bucket for PDF storage (prod) | "" (dev)
+    app_base_url: str           # public frontend URL — used to build invite links
 
 
 def _load() -> Config:
@@ -30,13 +31,24 @@ def _load() -> Config:
         if not cors:
             _abort("CORS_ORIGIN_REGEX is required in production")
 
+    firebase_project_id = os.getenv("FIREBASE_PROJECT_ID", "ragaas-local")
+
+    # Invite-link base. Prefer explicit APP_BASE_URL; else derive the Firebase
+    # Hosting URL in prod, localhost in dev. (empty env var -> falls through)
+    default_base = (
+        f"https://{firebase_project_id}.web.app" if env == "production"
+        else "http://localhost:5173"
+    )
+    app_base_url = (os.getenv("APP_BASE_URL") or default_base).rstrip("/")
+
     cfg = Config(
         env=env,
-        firebase_project_id=os.getenv("FIREBASE_PROJECT_ID", "ragaas-local"),
+        firebase_project_id=firebase_project_id,
         use_emulator=use_emulator,
         gcp_project_id=os.getenv("GCP_PROJECT_ID", "ragaas-local"),
         cors_origin_regex=cors,  # type: ignore[arg-type]
         gcs_bucket=os.getenv("GCS_BUCKET", ""),
+        app_base_url=app_base_url,
     )
 
     # Sec fix #6: validate required prod env vars on startup

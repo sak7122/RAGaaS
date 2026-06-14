@@ -18,7 +18,7 @@ const ROLE_COLORS: Record<string, string> = {
 interface MembersPanelProps {
   members: Member[];
   currentUid: string;
-  onInvite: (email: string, role: string) => Promise<void>;
+  onInvite: (email: string, role: string) => Promise<{ email_sent?: boolean; invite_link?: string } | void>;
   onRemove: (uid: string) => Promise<void>;
   onChangeRole: (uid: string, role: string) => Promise<void>;
 }
@@ -29,15 +29,24 @@ export function MembersPanel({ members, currentUid, onInvite, onRemove, onChange
   const [inviting, setInviting] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [error, setError]     = useState("");
+  const [notice, setNotice]   = useState<{ msg: string; link?: string } | null>(null);
 
   async function handleInvite(e: FormEvent) {
     e.preventDefault();
     if (!email.trim()) return;
     setInviting(true);
     setError("");
+    setNotice(null);
+    const to = email.trim();
     try {
-      await onInvite(email.trim(), role);
+      const result = await onInvite(to, role);
       setEmail("");
+      if (result && result.email_sent) {
+        setNotice({ msg: `Invite emailed to ${to}` });
+      } else {
+        // SMTP not configured — surface the link so the admin can share it
+        setNotice({ msg: `Invite created — email not configured. Share this link:`, link: result?.invite_link });
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invite failed");
     } finally {
@@ -118,6 +127,21 @@ export function MembersPanel({ members, currentUid, onInvite, onRemove, onChange
         </button>
       </form>
       {error && <span style={{ fontSize: 11, color: "var(--red)" }}>{error}</span>}
+      {notice && (
+        <div style={{ fontSize: 11, color: "var(--ink-48)", marginTop: 4 }}>
+          <span style={{ color: notice.link ? "var(--ink-48)" : "var(--green)" }}>{notice.msg}</span>
+          {notice.link && (
+            <button
+              type="button"
+              className="btn-ghost-sm"
+              style={{ marginLeft: 6 }}
+              onClick={() => navigator.clipboard?.writeText(notice.link!)}
+            >
+              Copy link
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

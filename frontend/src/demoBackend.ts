@@ -83,7 +83,7 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
   if (path.endsWith("/api/documents") && method === "GET") return json(demoDocs);
   if (path.includes("/api/documents/") && method === "DELETE") return json({ ok: true });
   if (path.endsWith("/api/tenant/members") && method === "GET") return json(demoMembers);
-  if (path.endsWith("/api/tenant/invite")) return json({ ok: true, uid: "demo-invited" }, 201);
+  if (path.endsWith("/api/tenant/invite")) return json({ ok: true, uid: "demo-invited", email_sent: true }, 201);
   if (path.endsWith("/api/tenant/profile") && method === "PUT") return json({ ok: true });
   if (path.includes("/api/tenant/members/")) return json({ ok: true });
 
