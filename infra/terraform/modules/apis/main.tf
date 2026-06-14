@@ -17,6 +17,7 @@ locals {
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "monitoring.googleapis.com",
+    "aiplatform.googleapis.com", # Vertex AI: embeddings + Gemini generation
   ]
 }
 

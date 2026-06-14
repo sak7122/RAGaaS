@@ -241,8 +241,18 @@ def extract_chunks(content: bytes) -> list[dict]:
         for page_num, page in enumerate(reader.pages, start=1):
             page_text = (page.extract_text() or "").strip()
             for idx, chunk in enumerate(chunk_text(page_text)):
-                result.append({"page": page_num, "chunk_index": idx, "text": chunk})
-        return result or [{"page": 1, "chunk_index": 0, "text": ""}]
+                if chunk.strip():               # skip empty chunks (blank/image pages)
+                    result.append({"page": page_num, "chunk_index": idx, "text": chunk})
+        # No selectable text -> almost certainly a scanned/image PDF (needs OCR).
+        if not result:
+            raise HTTPException(
+                status_code=422,
+                detail=("No selectable text found in this PDF. It looks like a scanned or "
+                        "image-only document — OCR isn't supported yet. Upload a text-based PDF."),
+            )
+        return result
+    except HTTPException:
+        raise
     except Exception as exc:
         log.warning("PDF parse failed: %s", exc)
         raise HTTPException(
