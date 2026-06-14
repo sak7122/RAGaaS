@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
 
 test("loads shell: nav, sidebar stats, seeded documents", async ({ page }) => {
   await expect(page.getByText("RAGaaS").first()).toBeVisible();
-  await expect(page.getByText("acme-corp").first()).toBeVisible();
+  await expect(page.getByText("Acme Corp").first()).toBeVisible();
   // Sidebar usage + docs
   await expect(page.getByText("queries today")).toBeVisible();
   await expect(page.getByText("Q3_Earnings_Report.pdf")).toBeVisible();

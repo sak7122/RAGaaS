@@ -27,6 +27,7 @@ let queriesUsed = 42;
 
 const demoStatus = () => ({
   tenant_id: "acme-corp",
+  tenant_name: "Acme Corp",
   queries_used: queriesUsed,
   query_limit: 1000,
   documents: demoDocs.length,
@@ -83,6 +84,7 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
   if (path.includes("/api/documents/") && method === "DELETE") return json({ ok: true });
   if (path.endsWith("/api/tenant/members") && method === "GET") return json(demoMembers);
   if (path.endsWith("/api/tenant/invite")) return json({ ok: true, uid: "demo-invited" }, 201);
+  if (path.endsWith("/api/tenant/profile") && method === "PUT") return json({ ok: true });
   if (path.includes("/api/tenant/members/")) return json({ ok: true });
 
   if (path.endsWith("/api/chat") && method === "POST") {

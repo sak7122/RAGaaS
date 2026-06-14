@@ -39,6 +39,7 @@ const DEV_TENANTS = [
 
 type Status = {
   tenant_id: string;
+  tenant_name: string;
   queries_used: number;
   query_limit: number;
   documents: number;
@@ -82,6 +83,7 @@ function App() {
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const [authMode, setAuthMode]       = useState<"signin" | "signup">("signin");
+  const [displayName, setDisplayName] = useState("");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
 
@@ -267,9 +269,21 @@ function App() {
         setIdToken(token);
         setOnline(true);
         setAuthState("Authenticated");
+        setDisplayName(user.displayName ?? "");
         if (user.email) {
           setTenantEmail(user.email);
           setMessages(loadChatHistory(user.email));
+        }
+        // Self-heal: push the workspace name typed at signup to the backend so
+        // the UI shows it instead of the raw ws-<uid> tenant id.
+        const ws = (() => { try { return localStorage.getItem("ragaas:workspace") || ""; } catch { return ""; } })();
+        if (ws) {
+          apiFetch(`${API}/api/tenant/profile`, {
+            method: "PUT",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ name: ws }),
+          }).then(() => { try { localStorage.removeItem("ragaas:workspace"); } catch { /* */ } })
+            .catch(() => { /* retry next login */ });
         }
       } else {
         currentUidRef.current = "";
@@ -413,7 +427,7 @@ function App() {
           transition={{ delay: 0.3 }}
         >
           <span className={`nav-dot${!online ? (authState === "Signing in…" ? " pending" : " offline") : ""}`} />
-          {online ? (status?.tenant_id ?? tenantEmail) : authState}
+          {online ? (status?.tenant_name ?? tenantEmail) : authState}
         </motion.div>
         {!USE_EMULATOR && !DEMO && online && (
           <button type="button" className="nav-signout" onClick={handleSignOut} title="Sign out">
@@ -433,6 +447,7 @@ function App() {
           status={status}
           authState={authState}
           online={online}
+          userLabel={displayName || tenantEmail}
           onRefresh={refreshStatus}
           extraSlot={
             <>

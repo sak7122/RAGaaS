@@ -28,6 +28,7 @@ from backend.storage import create_storage_backend
 from backend.index_store import create_index_store
 from backend.rag import create_embedder, create_generator
 from backend.insights import create_insights_store
+from backend.tenant_profile import create_tenant_profile_store, prettify
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -80,6 +81,7 @@ index_store   = create_index_store(config.env, INDEX_FILE)
 embedder      = create_embedder()
 generator     = create_generator()
 insights_store = create_insights_store(config.env)
+tenant_profile_store = create_tenant_profile_store(config.env)
 log.info("startup env=%s emulator=%s embedder=%s generator=%s",
          config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__)
 
@@ -118,9 +120,14 @@ class ChatResponse(BaseModel):
 
 class TenantStatus(BaseModel):
     tenant_id: str
+    tenant_name: str
     queries_used: int
     query_limit: int
     documents: int
+
+
+class TenantProfileRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
 
 
 class DocumentMeta(BaseModel):
@@ -263,12 +270,25 @@ def health() -> dict:
 def tenant_status(principal: Annotated[Principal, Depends(principal_from_auth)]) -> TenantStatus:
     tenant_id = principal.tenant_id
     docs = index_store.list_docs(tenant_id)
+    name = tenant_profile_store.get_name(tenant_id) or prettify(tenant_id)
     return TenantStatus(
         tenant_id=tenant_id,
+        tenant_name=name,
         queries_used=usage_store.get_count(tenant_id),
         query_limit=QUERY_LIMIT,
         documents=len(docs),
     )
+
+
+@app.put("/api/tenant/profile")
+def set_tenant_profile(
+    body: TenantProfileRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    tenant_profile_store.set_name(principal.tenant_id, body.name.strip())
+    log.info("tenant_name set tenant=%s name=%s", principal.tenant_id, body.name.strip())
+    return {"ok": True, "tenant_name": body.name.strip()}
 
 
 # ── Routes: documents ─────────────────────────────────────────────────────────
@@ -525,9 +545,10 @@ def delete_tenant(principal: Annotated[Principal, Depends(principal_from_auth)])
     storage.delete_tenant(tenant_id)
     removed = index_store.delete_tenant(tenant_id)
 
-    # Clear usage counters and members
+    # Clear usage counters, members, and profile
     usage_store.reset_tenant(tenant_id)
     member_store.delete_tenant(tenant_id)
+    tenant_profile_store.delete_tenant(tenant_id)
 
     log.info("tenant_erased tenant=%s docs=%d by=%s", tenant_id, removed, principal.uid)
     return {"ok": True, "tenant_id": tenant_id, "documents_removed": removed}

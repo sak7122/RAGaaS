@@ -13,6 +13,7 @@ import { RefreshCcw, Shield, FileText, Users } from "lucide-react";
 
 type Status = {
   tenant_id: string;
+  tenant_name: string;
   queries_used: number;
   query_limit: number;
   documents: number;
@@ -27,6 +28,7 @@ interface SidebarProps {
   status: Status | null;
   authState: string;
   online: boolean;
+  userLabel?: string;   // person: display name or email
   onRefresh: () => void;
   extraSlot?: ReactNode;
 }
@@ -76,11 +78,13 @@ export function Sidebar({
   status,
   authState,
   online,
+  userLabel,
   onRefresh,
   extraSlot,
 }: SidebarProps) {
   const dotClass  = online ? "" : authState === "Signing in…" ? "pending" : "offline";
-  const chipLabel = status?.tenant_id ?? (online ? "connected" : authState);
+  const person    = userLabel || tenantEmail || (online ? "Account" : authState);
+  const workspace = status?.tenant_name ?? "";
   const queriesUsed = status?.queries_used ?? 0;
   const queryLimit  = status?.query_limit  ?? 1000;
   const docs        = status?.documents    ?? 0;
@@ -128,9 +132,10 @@ export function Sidebar({
       >
         <span className="sidebar-label">Account</span>
         <div className="auth-chip">
-          <Avatar label={chipLabel} />
+          <Avatar label={person} />
           <div className="auth-chip-body">
-            <span className="auth-chip-label">{chipLabel}</span>
+            <span className="auth-chip-label">{person}</span>
+            {workspace && <span className="auth-chip-workspace">{workspace}</span>}
             <span className={`auth-chip-status ${dotClass}`}>
               <span className={`auth-dot ${dotClass}`} />
               {online ? "online" : authState === "Signing in…" ? "connecting…" : "offline"}
