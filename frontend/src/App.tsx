@@ -1,7 +1,15 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { motion } from "framer-motion";
-import { devSignInTenant, signInWithPassword, signUpWithPassword } from "./firebase";
+import { LogOut } from "lucide-react";
+import {
+  devSignInTenant,
+  signInWithPassword,
+  signUpWithPassword,
+  signOutUser,
+  watchAuth,
+  friendlyAuthError,
+} from "./firebase";
 import { Sidebar } from "./components/Sidebar";
 import { UploadBar } from "./components/UploadBar";
 import { ChatWindow, ChatMessage } from "./components/ChatWindow";
@@ -70,6 +78,8 @@ function App() {
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [members, setMembers]         = useState<Member[]>([]);
   const [view, setView]               = useState<"chat" | "insights">("chat");
+  // In prod we don't know auth state until the listener fires once.
+  const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
 
@@ -241,31 +251,74 @@ function App() {
     return () => { live = false; };
   }, [tenantEmail]);
 
-  // ── Auth: prod mode (form sign-in) ──────────────────────────────────────
+  // ── Auth: prod session listener ─────────────────────────────────────────
+  // Restores the session on page reload AND keeps the token fresh on the
+  // SDK's automatic ~hourly refresh, so API calls never 401 on expiry.
+  useEffect(() => {
+    if (USE_EMULATOR || DEMO) return;
+    const unsub = watchAuth(async (user) => {
+      setAuthReady(true);
+      if (user) {
+        const token = await user.getIdToken();
+        currentUidRef.current = user.uid;
+        tokenRef.current = token;
+        setIdToken(token);
+        setOnline(true);
+        setAuthState("Authenticated");
+        if (user.email) {
+          setTenantEmail(user.email);
+          setMessages(loadChatHistory(user.email));
+        }
+      } else {
+        currentUidRef.current = "";
+        tokenRef.current = "";
+        setIdToken("");
+        setOnline(false);
+        setAuthState("idle");
+        setStatus(null);
+        setDocs([]);
+        setMembers([]);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // ── Auth: prod sign-in/up (listener above sets state on success) ────────
   const handleProdAuth = useCallback(async (email: string, password: string, isNew: boolean) => {
+    setAuthState("Signing in…");
     try {
-      const cred = isNew
-        ? await signUpWithPassword(email, password)
-        : await signInWithPassword(email, password);
-      const token = await cred.user.getIdToken();
-      currentUidRef.current = cred.user.uid;
-      tokenRef.current = token;
-      setIdToken(token);
-      setOnline(true);
-      setAuthState("Authenticated");
-      setTenantEmail(email);
-      setMessages(loadChatHistory(email));
+      if (isNew) await signUpWithPassword(email, password);
+      else await signInWithPassword(email, password);
+      // watchAuth fires and populates session state.
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Auth failed";
-      setAuthState(msg);
+      setAuthState(friendlyAuthError(err));
     }
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    try { await signOutUser(); } catch { /* ignore */ }
+    setView("chat");
+    setMessages([]);
   }, []);
 
   useEffect(() => {
     refreshStatus();
   }, [idToken, refreshStatus]);
 
+  // ── Prod: restoring session (avoid login flash on reload) ───────────────
+  if (!USE_EMULATOR && !DEMO && !authReady) {
+    return (
+      <div className="shell">
+        <div className="auth-splash">
+          <span className="auth-splash-mark">R</span>
+          <span className="auth-splash-text">Restoring your session…</span>
+        </div>
+      </div>
+    );
+  }
+
   // ── Prod: show auth form ─────────────────────────────────────────────────
+  const STATUS_WORDS = new Set(["idle", "Signing in…", "Authenticated"]);
   if (!USE_EMULATOR && !online) {
     return (
       <div className="shell">
@@ -278,7 +331,10 @@ function App() {
           </div>
         </nav>
         <ErrorBoundary>
-          <AuthForm onAuth={handleProdAuth} error={authState === "idle" ? "" : authState} />
+          <AuthForm
+            onAuth={handleProdAuth}
+            error={STATUS_WORDS.has(authState) ? "" : authState}
+          />
         </ErrorBoundary>
       </div>
     );
@@ -336,6 +392,11 @@ function App() {
           <span className={`nav-dot${!online ? (authState === "Signing in…" ? " pending" : " offline") : ""}`} />
           {online ? (status?.tenant_id ?? tenantEmail) : authState}
         </motion.div>
+        {!USE_EMULATOR && !DEMO && online && (
+          <button type="button" className="nav-signout" onClick={handleSignOut} title="Sign out">
+            <LogOut size={14} />
+          </button>
+        )}
       </nav>
 
       <ErrorBoundary>

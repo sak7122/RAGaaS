@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
-import { Lock, Mail } from "lucide-react";
+import { motion } from "framer-motion";
+import { Lock, Mail, Eye, EyeOff, Loader2 } from "lucide-react";
 
 interface AuthFormProps {
   onAuth: (email: string, password: string, isNew: boolean) => Promise<void>;
@@ -10,11 +11,15 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [isNew, setIsNew]       = useState(false);
+  const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
+
+  const pwTooShort = isNew && password.length > 0 && password.length < 6;
+  const canSubmit = !!email && !!password && !pwTooShort && !loading;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!email || !password) return;
+    if (!canSubmit) return;
     setLoading(true);
     try {
       await onAuth(email, password, isNew);
@@ -25,9 +30,21 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
 
   return (
     <div className="auth-form-wrap">
-      <div className="auth-card">
-        <h2 className="auth-title">Sign in to RAGaaS</h2>
-        <p className="auth-sub">Ask questions about your documents</p>
+      <motion.div
+        className="auth-card"
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+      >
+        <div className="auth-brand">
+          <span className="auth-brand-mark">R</span>
+          <span className="auth-brand-name">RAGaaS</span>
+        </div>
+
+        <h2 className="auth-title">{isNew ? "Create your account" : "Welcome back"}</h2>
+        <p className="auth-sub">
+          {isNew ? "Start asking questions about your documents" : "Sign in to your knowledge base"}
+        </p>
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="auth-field">
@@ -39,13 +56,15 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
+              autoFocus
               required
             />
           </div>
+
           <div className="auth-field">
             <Lock size={15} color="var(--ink-48)" />
             <input
-              type="password"
+              type={showPw ? "text" : "password"}
               className="chat-input"
               placeholder="Password"
               value={password}
@@ -53,12 +72,34 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
               autoComplete={isNew ? "new-password" : "current-password"}
               required
             />
+            <button
+              type="button"
+              className="auth-eye"
+              onClick={() => setShowPw((v) => !v)}
+              tabIndex={-1}
+              aria-label={showPw ? "Hide password" : "Show password"}
+            >
+              {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
           </div>
 
-          {error && <div className="error-banner">{error}</div>}
+          {pwTooShort && (
+            <div className="auth-hint">Password must be at least 6 characters.</div>
+          )}
+          {error && (
+            <motion.div
+              className="error-banner"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              {error}
+            </motion.div>
+          )}
 
-          <button type="submit" className="btn-primary" disabled={loading} style={{ width: "100%" }}>
-            {loading ? "…" : isNew ? "Create account" : "Sign in"}
+          <button type="submit" className="btn-primary auth-submit" disabled={!canSubmit}>
+            {loading ? (
+              <Loader2 size={16} className="auth-spin" />
+            ) : isNew ? "Create account" : "Sign in"}
           </button>
         </form>
 
@@ -71,10 +112,10 @@ export function AuthForm({ onAuth, error }: AuthFormProps) {
         </button>
 
         <p className="auth-privacy">
-          By signing in you agree to our{" "}
+          By continuing you agree to our{" "}
           <a href="/privacy" className="auth-privacy-link">Privacy &amp; Data Policy</a>.
         </p>
-      </div>
+      </motion.div>
     </div>
   );
 }
