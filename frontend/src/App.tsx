@@ -31,6 +31,19 @@ const apiFetch: typeof fetch = DEMO
   ? ((input, init) => demoFetch(input as string, init as RequestInit)) as typeof fetch
   : fetch;
 
+// Invite links look like /?invite=<uid>&tenant=<tenant_id>. Parsed once on
+// load; consumed after the user is authenticated (see watchAuth below).
+function parseInviteParams(): { uid: string; tenant: string } | null {
+  const p = new URLSearchParams(window.location.search);
+  const uid = p.get("invite");
+  const tenant = p.get("tenant");
+  return uid && tenant ? { uid, tenant } : null;
+}
+
+function clearInviteFromUrl() {
+  window.history.replaceState({}, "", window.location.pathname);
+}
+
 const DEV_TENANTS = [
   { label: "Demo",     email: "demo@ragaas.local" },
   { label: "Tenant A", email: "tenant-a@ragaas.local" },
@@ -82,10 +95,13 @@ function App() {
   const [view, setView]               = useState<"chat" | "insights">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
-  const [authMode, setAuthMode]       = useState<"signin" | "signup">("signin");
+  const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
   const [displayName, setDisplayName] = useState("");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
+  const inviteRef                     = useRef(parseInviteParams());
+  const [inviteInfo]                  = useState(inviteRef.current);
+  const [inviteJoined, setInviteJoined] = useState<string | null>(null);
 
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
@@ -275,16 +291,39 @@ function App() {
           setTenantEmail(user.email);
           setMessages(loadChatHistory(user.email));
         }
-        // Self-heal: push the workspace name typed at signup to the backend so
-        // the UI shows it instead of the raw ws-<uid> tenant id.
-        const ws = (() => { try { return localStorage.getItem("ragaas:workspace") || ""; } catch { return ""; } })();
-        if (ws) {
-          apiFetch(`${API}/api/tenant/profile`, {
-            method: "PUT",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ name: ws }),
-          }).then(() => { try { localStorage.removeItem("ragaas:workspace"); } catch { /* */ } })
-            .catch(() => { /* retry next login */ });
+
+        // Consume a pending invite: join the shared tenant, then refresh the
+        // token so the new tenant_id custom claim takes effect immediately.
+        const invite = inviteRef.current;
+        if (invite) {
+          inviteRef.current = null; // consume once
+          try {
+            const res = await apiFetch(`${API}/api/tenant/accept-invite`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ tenant_id: invite.tenant, invite_uid: invite.uid }),
+            });
+            if (res.ok) {
+              const fresh = await user.getIdToken(true); // pick up tenant_id claim
+              tokenRef.current = fresh;
+              setIdToken(fresh);
+              setInviteJoined(invite.tenant);
+            }
+          } catch { /* invalid/expired invite — fall through to own workspace */ }
+          clearInviteFromUrl();
+        } else {
+          // Self-heal: push the workspace name typed at signup to the backend so
+          // the UI shows it instead of the raw ws-<uid> tenant id. Skipped when
+          // accepting an invite (the caller is joining someone else's workspace).
+          const ws = (() => { try { return localStorage.getItem("ragaas:workspace") || ""; } catch { return ""; } })();
+          if (ws) {
+            apiFetch(`${API}/api/tenant/profile`, {
+              method: "PUT",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ name: ws }),
+            }).then(() => { try { localStorage.removeItem("ragaas:workspace"); } catch { /* */ } })
+              .catch(() => { /* retry next login */ });
+          }
         }
       } else {
         currentUidRef.current = "";
@@ -359,6 +398,12 @@ function App() {
             Sign in to continue
           </div>
         </nav>
+        {inviteInfo && (
+          <div className="invite-banner">
+            🎟️ You've been invited to a workspace. Sign in or create an account
+            with the invited email to join.
+          </div>
+        )}
         <ErrorBoundary>
           {authMode === "signup" ? (
             <SignUpForm
@@ -385,6 +430,12 @@ function App() {
 
   return (
     <div className="shell">
+      {inviteJoined && (
+        <div className="invite-banner success" onClick={() => setInviteJoined(null)}>
+          ✅ You've joined the workspace. You can now ask questions about its
+          documents. (click to dismiss)
+        </div>
+      )}
       <nav className="global-nav">
         <motion.span
           className="nav-brand"

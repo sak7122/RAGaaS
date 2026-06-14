@@ -49,7 +49,8 @@ locals {
     "roles/datastore.user",
     "roles/storage.objectAdmin",
     "roles/firebase.sdkAdminServiceAgent",
-    "roles/aiplatform.user", # Vertex AI embeddings + Gemini generation
+    "roles/firebaseauth.admin", # set tenant_id custom claims on invite accept
+    "roles/aiplatform.user",    # Vertex AI embeddings + Gemini generation
   ]
 }
 

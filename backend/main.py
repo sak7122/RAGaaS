@@ -22,6 +22,7 @@ from backend.firebase_services import (
     Principal,
     QUERY_LIMIT,
     create_member_store,
+    set_tenant_claim,
     create_usage_store,
     verify_firebase_token,
 )
@@ -174,6 +175,11 @@ class InviteRequest(BaseModel):
     role: str = Field(default="viewer")
 
 
+class AcceptInviteRequest(BaseModel):
+    tenant_id: str = Field(min_length=1, max_length=128)
+    invite_uid: str | None = None  # informational; authorization is by email
+
+
 class RoleRequest(BaseModel):
     role: str
 
@@ -186,7 +192,8 @@ def principal_from_auth(authorization: Annotated[str | None, Header()] = None) -
     tenant_id = TOKEN_TENANT_MAP.get(token)
     if tenant_id:
         # Dev mock tokens always get admin so all endpoints are testable
-        return Principal(uid=f"dev-{tenant_id}", tenant_id=tenant_id, role="admin")
+        return Principal(uid=f"dev-{tenant_id}", tenant_id=tenant_id,
+                         email=f"{tenant_id}@ragaas.local", role="admin")
     return verify_firebase_token(token, member_store)
 
 
@@ -558,6 +565,50 @@ def invite_member(
     )
     log.info("invite tenant=%s email=%s role=%s emailed=%s", tenant_id, body.email, body.role, email_sent)
     return {"ok": True, "uid": uid, "invite_link": invite_link, "email_sent": email_sent}
+
+
+@app.post("/api/tenant/accept-invite")
+def accept_invite(
+    body: AcceptInviteRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    """Join a workspace the caller was invited to. Authorization is by the
+    caller's *verified email* matching a pending invite in the target tenant —
+    so a leaked link can't be claimed by someone else's account."""
+    target = body.tenant_id
+    email = (principal.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=403, detail="Your account has no email; cannot accept an invite")
+
+    members = member_store.get_members(target)
+
+    # Already a member (re-click / refresh) → idempotent success.
+    already = next((m for m in members if m.uid == principal.uid), None)
+    if already and already.joined_at:
+        set_tenant_claim(principal.uid, target)  # ensure claim is present
+        return {"ok": True, "tenant_id": target, "role": already.role, "already_member": True}
+
+    pending = next(
+        (m for m in members if (m.email or "").strip().lower() == email and not m.joined_at),
+        None,
+    )
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No pending invite for your email in this workspace")
+
+    now = datetime.now(timezone.utc).isoformat()
+    role = pending.role
+    # Swap the placeholder invite row for the caller's real uid.
+    if pending.uid != principal.uid:
+        member_store.remove_member(target, pending.uid)
+    member_store.add_member(target, MemberRecord(
+        uid=principal.uid, email=principal.email or email, role=role,
+        invited_at=pending.invited_at, joined_at=now,
+    ))
+
+    # Persist the shared tenant on the user so future tokens resolve to it.
+    claim_set = set_tenant_claim(principal.uid, target)
+    log.info("accept-invite tenant=%s uid=%s role=%s claim=%s", target, principal.uid, role, claim_set)
+    return {"ok": True, "tenant_id": target, "role": role, "claim_set": claim_set}
 
 
 @app.patch("/api/tenant/members/{uid}")

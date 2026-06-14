@@ -104,6 +104,46 @@ def test_insights_requires_admin() -> None:
     assert client.get("/api/insights").status_code == 401
 
 
+HEADERS_DEMO = {"Authorization": "Bearer mock-tenant-token-abc"}  # email tenant-demo@ragaas.local
+
+
+def test_invite_then_accept_joins_shared_tenant() -> None:
+    # tenant-a admin invites tenant-b's email as an uploader.
+    inv = client.post(
+        "/api/tenant/invite",
+        json={"email": "tenant-b@ragaas.local", "role": "uploader"},
+        headers=HEADERS_A,
+    )
+    assert inv.status_code == 201
+
+    # The invited user (token resolves to email tenant-b@ragaas.local) accepts.
+    acc = client.post(
+        "/api/tenant/accept-invite",
+        json={"tenant_id": "tenant-a"},
+        headers=HEADERS_B,
+    )
+    assert acc.status_code == 200
+    assert acc.json()["role"] == "uploader"
+
+    # They now appear as a joined member of tenant-a under their real uid.
+    members = client.get("/api/tenant/members", headers=HEADERS_A).json()
+    joined = [m for m in members if m["uid"] == "dev-tenant-b"]
+    assert joined and joined[0]["joined_at"] and joined[0]["role"] == "uploader"
+    # The placeholder invite row is gone.
+    assert not any(m["uid"].startswith("invited-") for m in members)
+
+    # Idempotent: accepting again is a no-op success.
+    again = client.post("/api/tenant/accept-invite", json={"tenant_id": "tenant-a"}, headers=HEADERS_B)
+    assert again.status_code == 200
+    assert again.json().get("already_member") is True
+
+
+def test_accept_invite_rejects_uninvited_email() -> None:
+    # tenant-demo's email was never invited to tenant-a → cannot join.
+    res = client.post("/api/tenant/accept-invite", json={"tenant_id": "tenant-a"}, headers=HEADERS_DEMO)
+    assert res.status_code == 404
+
+
 def test_vector_search_ranks_embedded_chunks() -> None:
     # Insert an embedded doc and confirm it is retrieved via the vector path
     from backend.main import load_index, save_index as _save

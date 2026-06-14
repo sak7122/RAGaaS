@@ -274,6 +274,22 @@ def tenant_from_claims(decoded: dict) -> str:
     raise HTTPException(status_code=403, detail="Invalid token: no user id")
 
 
+def set_tenant_claim(uid: str, tenant_id: str) -> bool:
+    """Attach a tenant_id custom claim to a Firebase user so their future ID
+    tokens resolve to that shared tenant (see tenant_from_claims). Returns
+    False if Firebase isn't available (dev/memory mode) — caller proceeds."""
+    try:
+        init_firebase()
+        user = auth.get_user(uid)
+        claims = dict(user.custom_claims or {})
+        claims["tenant_id"] = tenant_id
+        auth.set_custom_user_claims(uid, claims)
+        return True
+    except Exception as exc:
+        log.warning("set_tenant_claim failed uid=%s tenant=%s: %s", uid, tenant_id, exc)
+        return False
+
+
 def verify_firebase_token(id_token: str, member_store: MemberStore | None = None) -> Principal:
     try:
         init_firebase()

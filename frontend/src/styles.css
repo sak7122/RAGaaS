@@ -1171,6 +1171,21 @@ html {
 .role-select:focus    { background: var(--hairline); }
 .role-select:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.invite-banner {
+  padding: 10px 16px;
+  background: var(--primary-glow, rgba(0,113,227,0.12));
+  color: var(--primary, #0071e3);
+  font-size: 13px;
+  text-align: center;
+  border-bottom: 1px solid var(--primary, #0071e3);
+}
+.invite-banner.success {
+  background: rgba(52,199,89,0.14);
+  color: var(--green, #34c759);
+  border-bottom-color: var(--green, #34c759);
+  cursor: pointer;
+}
+
 .invite-form { display: flex; gap: var(--sp-xs); align-items: center; margin-top: var(--sp-xs); }
 
 .invite-input {
