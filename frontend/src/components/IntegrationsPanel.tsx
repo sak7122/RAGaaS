@@ -175,7 +175,7 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
   const [teamId, setTeamId] = useState("");
   const [teamName, setTeamName] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [instructions, setInstructions] = useState("");
+  const [instructions, setInstructions] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
   async function load() {
@@ -189,6 +189,24 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
+  function buildInstructions(id: string): string {
+    return [
+      `1. In your Slack app settings → Slash Commands → Create New Command:`,
+      `   Command:      /ask`,
+      `   Request URL:  ${apiUrl}/api/integrations/slack/command`,
+      `   Description:  Ask your company knowledge base`,
+      `   Usage hint:   [your question]`,
+      ``,
+      `2. Copy the Signing Secret from your Slack app:`,
+      `   Basic Information → App Credentials → Signing Secret`,
+      ``,
+      `3. Set it on Cloud Run:`,
+      `   gcloud run services update ragaas-backend --set-env-vars SLACK_SIGNING_SECRET=<secret>`,
+      ``,
+      `Connected team ID: ${id}`,
+    ].join("\n");
+  }
+
   async function connect() {
     setConnecting(true);
     try {
@@ -198,8 +216,7 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
         body: JSON.stringify({ team_id: teamId.trim(), team_name: teamName.trim() }),
       });
       if (r.ok) {
-        const body = await r.json();
-        setInstructions(body.instructions ?? "");
+        setInstructions(buildInstructions(teamId.trim()));
         setTeamId("");
         setTeamName("");
         setShowForm(false);
@@ -224,11 +241,11 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
       <p className="integrations-hint">Let your team use <code>/ask</code> in Slack to query your knowledge base.</p>
 
       <AnimatePresence>
-        {instructions && (
+        {instructions !== null && (
           <motion.div className="new-key-banner" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <strong>Workspace connected. Setup steps:</strong>
-            <pre className="snippet-code" style={{ whiteSpace: "pre-wrap" }}>{instructions}</pre>
-            <button type="button" className="btn-ghost" onClick={() => setInstructions("")}>Dismiss</button>
+            <pre className="snippet-code" style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>{instructions}</pre>
+            <button type="button" className="btn-ghost" onClick={() => setInstructions(null)}>Dismiss</button>
           </motion.div>
         )}
       </AnimatePresence>
