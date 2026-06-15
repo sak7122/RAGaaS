@@ -91,8 +91,14 @@ log.info("startup env=%s emulator=%s embedder=%s generator=%s",
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
+class TurnHistory(BaseModel):
+    role: str   # "user" or "assistant"
+    text: str = Field(max_length=2000)
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    history: list[TurnHistory] = Field(default_factory=list, max_length=4)
 
 
 class Citation(BaseModel):
@@ -230,17 +236,16 @@ def assert_safe_path(resolved: Path, base: Path) -> None:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
 
-def chunk_text(text: str, chunk_size: int = 512) -> list[str]:
+def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> list[str]:
     words = text.split()
-    chunks, current, length = [], [], 0
-    for word in words:
-        if length + len(word) + 1 > chunk_size and current:
-            chunks.append(" ".join(current))
-            current, length = [], 0
-        current.append(word)
-        length += len(word) + 1
-    if current:
-        chunks.append(" ".join(current))
+    chunks: list[str] = []
+    start = 0
+    while start < len(words):
+        end = min(start + chunk_size, len(words))
+        chunks.append(" ".join(words[start:end]))
+        if end == len(words):
+            break
+        start += chunk_size - overlap
     return chunks or [""]
 
 
@@ -431,22 +436,34 @@ async def upload_document(
 def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> ChatResponse:
     tenant_id = principal.tenant_id
     queries_used = enforce_quota(tenant_id)
-    query_terms = tokenize(req.message)
-    denom = max(len(query_terms), 1)
+    history = [t.model_dump() for t in req.history]
 
     started = time.perf_counter()
     docs = index_store.list_docs(tenant_id)
     total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
 
-    # 1) Vector retrieval (top candidates by cosine)
+    # 1) Query rewriting — expand/resolve the question for better retrieval
+    search_query = req.message
+    if hasattr(generator, "rewrite_query"):
+        try:
+            search_query = generator.rewrite_query(req.message, history)
+            if search_query != req.message:
+                log.info("query_rewrite tenant=%s original=%r rewritten=%r", tenant_id, req.message, search_query)
+        except Exception as exc:
+            log.warning("query rewrite failed (%s); using original", exc)
+
+    query_terms = tokenize(search_query)
+    denom = max(len(query_terms), 1)
+
+    # 2) Vector retrieval (top candidates by cosine)
     candidates: list[dict] = []
     try:
-        q_vec = embedder.embed_query(req.message)
-        candidates = index_store.vector_search(tenant_id, q_vec, k=20)
+        q_vec = embedder.embed_query(search_query)
+        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
     except Exception as exc:
         log.warning("vector search failed (%s); keyword fallback", exc)
 
-    # 2) Fallback: if no embedded chunks, scan all chunks (keyword only)
+    # 3) Fallback: if no embedded chunks, scan all chunks (keyword only)
     if not candidates:
         for doc in docs:
             chunks = doc.get("chunks") or [
@@ -462,7 +479,7 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
                     "vec_score": 0.0,
                 })
 
-    # 3) Hybrid score: blend cosine with keyword overlap
+    # 4) Hybrid score: blend cosine with keyword overlap
     ranked: list[tuple[float, dict]] = []
     for c in candidates:
         kw = len(query_terms & tokenize(c["text"])) / denom
@@ -472,10 +489,12 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
             ranked.append((round(score, 4), c))
 
     ranked.sort(key=lambda t: t[0], reverse=True)
-    top = ranked[:3]
+    # Drop chunks below relevance floor to avoid poisoning Gemini with noise
+    ranked = [(s, c) for s, c in ranked if s >= 0.05]
+    top = ranked[:6]
     top_chunks = [c for _, c in top]
 
-    answer = generator.generate(req.message, top_chunks)
+    answer = generator.generate(req.message, top_chunks, history)
 
     citations = [
         Citation(

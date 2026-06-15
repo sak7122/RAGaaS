@@ -195,10 +195,11 @@ function App() {
     setMessages(next);
     setIsLoading(true);
     try {
+      const history = messages.slice(-4).map((m) => ({ role: m.role, text: m.text }));
       const res  = await apiFetch(`${API}/api/chat`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, history }),
       });
       const body = await res.json();
       const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");

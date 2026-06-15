@@ -92,13 +92,13 @@ class VertexEmbedder:
 
 # ── Generator ─────────────────────────────────────────────────────────────────
 class Generator(Protocol):
-    def generate(self, question: str, chunks: list[dict]) -> str: ...
+    def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str: ...
 
 
 class MockGenerator:
     """Dev generator — grounded extractive answer assembled from retrieved chunks."""
 
-    def generate(self, question: str, chunks: list[dict]) -> str:
+    def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
         if not chunks:
             return "I cannot find that answer in your uploaded documents."
         files = ", ".join(sorted({c["file_name"] for c in chunks}))
@@ -117,7 +117,8 @@ class GeminiGenerator:
     SYSTEM = (
         "You are a retrieval-augmented assistant. Answer ONLY from the provided "
         "document excerpts. If the answer is not in them, say you cannot find it. "
-        "Be concise. Cite the source file and page inline like (file.pdf p.N)."
+        "Be thorough and complete — cover all relevant points found in the excerpts. "
+        "Cite the source file and page inline like (file.pdf p.N)."
     )
 
     def __init__(self, model: str, project: str, location: str) -> None:
@@ -127,15 +128,58 @@ class GeminiGenerator:
         self.model = model
         self.client = genai.Client(vertexai=True, project=project, location=location)
 
-    def generate(self, question: str, chunks: list[dict]) -> str:
+    _REWRITE_SYSTEM = (
+        "You are a search-query optimizer for a document retrieval system. "
+        "Your output is fed directly into an embedding model, NOT shown to a user. "
+        "Rules: (1) Resolve all pronouns using conversation context. "
+        "(2) Expand every acronym/abbreviation AND keep the short form too "
+        "    (e.g. CGPA → 'CGPA GPA grade point average cumulative'). "
+        "(3) Add synonyms and alternate phrasings that might appear in the document. "
+        "(4) Output a compact keyword phrase — NOT a full sentence or question. "
+        "(5) Return ONLY the keyword phrase, nothing else."
+    )
+
+    def rewrite_query(self, question: str, history: list[dict]) -> str:
+        """Produce a retrieval-optimized keyword expansion of the question."""
+        history_text = "\n".join(
+            f"{t['role'].capitalize()}: {t['text']}" for t in history[-4:]
+        )
+        context_block = f"Conversation:\n{history_text}\n\n" if history else ""
+        prompt = (
+            f"{context_block}"
+            f"Question to expand: {question}\n\n"
+            "Output the retrieval keyword phrase:"
+        )
+        try:
+            resp = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self._types.GenerateContentConfig(
+                    system_instruction=self._REWRITE_SYSTEM,
+                    temperature=0.1,
+                    max_output_tokens=120,
+                ),
+            )
+            rewritten = (resp.text or "").strip()
+            return rewritten if rewritten else question
+        except Exception:
+            return question
+
+    def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
         if not chunks:
             return "I cannot find that answer in your uploaded documents."
         context = "\n\n".join(
             f"[{c['file_name']} p.{c.get('page', 1)}]\n{c['text']}" for c in chunks
         )
+        history_block = ""
+        if history:
+            history_block = "Conversation history:\n" + "\n".join(
+                f"{t['role'].capitalize()}: {t['text']}" for t in history[-4:]
+            ) + "\n\n"
         # Defense against prompt injection from untrusted PDF text: the context is
         # clearly fenced and the system prompt forbids following instructions in it.
         prompt = (
+            f"{history_block}"
             f"Document excerpts:\n{context}\n\n"
             f"Question: {question}\n\n"
             f"Answer using only the excerpts above."
@@ -146,7 +190,7 @@ class GeminiGenerator:
             config=self._types.GenerateContentConfig(
                 system_instruction=self.SYSTEM,
                 temperature=0.2,
-                max_output_tokens=600,
+                max_output_tokens=1500,
             ),
         )
         return (resp.text or "").strip() or "I cannot find that answer in your uploaded documents."
