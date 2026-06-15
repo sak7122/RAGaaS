@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import json
 import logging
 import os
 import re
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from docx import Document
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import config
 from backend.firebase_services import (
@@ -32,6 +37,9 @@ from backend.rag import create_embedder, create_generator
 from backend.insights import create_insights_store
 from backend.tenant_profile import create_tenant_profile_store, prettify
 from backend.mailer import send_invite_email, smtp_configured
+from backend.share_store import create_share_store
+from backend.widget_store import create_widget_key_store
+from backend.slack_store import create_slack_store
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -53,6 +61,7 @@ VALID_ROLES    = {"admin", "uploader", "viewer"}
 # set RAG_ENGINE_LABEL="Vertex AI Search" if you migrate to managed retrieval.
 RAG_ENGINE_LABEL = os.getenv("RAG_ENGINE_LABEL", "Hybrid Vector Search")
 HYBRID_VECTOR_WEIGHT = 0.7   # blend: 0.7*cosine + 0.3*keyword overlap
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
 
 # Dev-only mock tokens — empty dict in production
 TOKEN_TENANT_MAP: dict[str, str] = (
@@ -67,6 +76,30 @@ TOKEN_TENANT_MAP: dict[str, str] = (
 if config.env == "development":
     log.info("dev mode: mock token map active (%d tokens)", len(TOKEN_TENANT_MAP))
 
+# ── Widget / Share CORS ───────────────────────────────────────────────────────
+# Widget routes and public share reads must be accessible from any origin
+# (widget embeds on 3rd-party sites). Widget keys replace browser credentials so
+# allow_credentials is NOT set, which is compatible with Access-Control-Allow-Origin: *.
+class WidgetCORSMiddleware(BaseHTTPMiddleware):
+    _WIDGET_PATHS = ("/api/widget/", "/api/share/", "/api/integrations/slack/")
+
+    async def dispatch(self, request: Request, call_next):
+        is_widget = any(request.url.path.startswith(p) for p in self._WIDGET_PATHS)
+        if is_widget and request.method == "OPTIONS":
+            return JSONResponse(
+                {},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, X-Widget-Key",
+                },
+            )
+        response = await call_next(request)
+        if is_widget:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="RAGaaS API", version="0.1.0")
 app.add_middleware(
@@ -77,15 +110,19 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(WidgetCORSMiddleware)  # outer layer — handles widget/share/slack paths
 
-usage_store   = create_usage_store()
-member_store  = create_member_store()
-storage       = create_storage_backend(config.env, UPLOAD_DIR, config.gcs_bucket)
-index_store   = create_index_store(config.env, INDEX_FILE)
-embedder      = create_embedder()
-generator     = create_generator()
-insights_store = create_insights_store(config.env)
+usage_store          = create_usage_store()
+member_store         = create_member_store()
+storage              = create_storage_backend(config.env, UPLOAD_DIR, config.gcs_bucket)
+index_store          = create_index_store(config.env, INDEX_FILE)
+embedder             = create_embedder()
+generator            = create_generator()
+insights_store       = create_insights_store(config.env)
 tenant_profile_store = create_tenant_profile_store(config.env)
+share_store          = create_share_store(config.env)
+widget_key_store     = create_widget_key_store(config.env)
+slack_store          = create_slack_store(config.env)
 log.info("startup env=%s emulator=%s embedder=%s generator=%s",
          config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__)
 
@@ -190,8 +227,32 @@ class RoleRequest(BaseModel):
     role: str
 
 
+class ShareCreateRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+    answer: str = Field(min_length=1, max_length=20000)
+    citations: list[dict] = Field(default_factory=list)
+
+
+class WidgetKeyCreateRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=80, default="My website")
+
+
+class SlackConnectRequest(BaseModel):
+    team_id: str = Field(min_length=1, max_length=32)
+    team_name: str = Field(min_length=1, max_length=128)
+
+
 # ── Auth & role guards ────────────────────────────────────────────────────────
-def principal_from_auth(authorization: Annotated[str | None, Header()] = None) -> Principal:
+def principal_from_auth(
+    authorization: Annotated[str | None, Header()] = None,
+    x_widget_key: Annotated[str | None, Header()] = None,
+) -> Principal:
+    # Widget API key auth — viewer-only, no Firebase token needed
+    if x_widget_key:
+        tenant_id = widget_key_store.resolve_tenant(x_widget_key)
+        if not tenant_id:
+            raise HTTPException(status_code=401, detail="Invalid widget key")
+        return Principal(uid="widget-user", tenant_id=tenant_id, email=None, role="viewer")
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()
@@ -694,3 +755,231 @@ def reset_dev_state() -> dict:
     insights_store.reset()
     log.info("quota + insights reset by dev endpoint")
     return {"ok": True}
+
+
+# ── Routes: share ─────────────────────────────────────────────────────────────
+@app.post("/api/share", status_code=201)
+def create_share(
+    body: ShareCreateRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    share_id = share_store.create({
+        "question": body.question,
+        "answer": body.answer,
+        "citations": body.citations,
+        "tenant_id": principal.tenant_id,
+    })
+    url = f"{config.app_base_url}/share/{share_id}"
+    log.info("share_create tenant=%s share_id=%s", principal.tenant_id, share_id)
+    return {"share_id": share_id, "url": url}
+
+
+@app.get("/api/share/{share_id}")
+def get_share(share_id: str) -> dict:
+    data = share_store.get(share_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Share not found")
+    return data
+
+
+# ── Routes: widget keys ───────────────────────────────────────────────────────
+@app.post("/api/tenant/widget-keys", status_code=201)
+def create_widget_key(
+    body: WidgetKeyCreateRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    result = widget_key_store.create_key(principal.tenant_id, body.label)
+    log.info("widget_key_created tenant=%s key_id=%s label=%s", principal.tenant_id, result["key_id"], body.label)
+    return result  # raw key returned ONCE — not stored in plaintext after this
+
+
+@app.get("/api/tenant/widget-keys")
+def list_widget_keys(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    require_role(principal, "admin")
+    return widget_key_store.list_keys(principal.tenant_id)
+
+
+@app.delete("/api/tenant/widget-keys/{key_id}")
+def delete_widget_key(
+    key_id: str,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    deleted = widget_key_store.delete_key(principal.tenant_id, key_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Widget key not found")
+    log.info("widget_key_deleted tenant=%s key_id=%s", principal.tenant_id, key_id)
+    return {"ok": True, "key_id": key_id}
+
+
+# ── Routes: Slack integration ─────────────────────────────────────────────────
+@app.post("/api/integrations/slack/connect")
+def slack_connect(
+    body: SlackConnectRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    slack_store.connect(body.team_id, body.team_name, principal.tenant_id)
+    slash_cmd = "/ask"
+    log.info("slack_connect tenant=%s team=%s", principal.tenant_id, body.team_id)
+    return {
+        "ok": True,
+        "team_id": body.team_id,
+        "instructions": (
+            f"Add a Slack slash command:\n"
+            f"  Command: {slash_cmd}\n"
+            f"  Request URL: {config.app_base_url.replace('web.app', 'run.app') if 'web.app' in config.app_base_url else config.app_base_url}/api/integrations/slack/command\n"
+            f"  Short description: Ask your company knowledge base\n"
+            f"Set SLACK_SIGNING_SECRET env var on Cloud Run to the signing secret from your Slack app."
+        ),
+    }
+
+
+@app.get("/api/integrations/slack/connections")
+def list_slack_connections(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    require_role(principal, "admin")
+    return slack_store.list_connections(principal.tenant_id)
+
+
+@app.delete("/api/integrations/slack/connections/{team_id}")
+def slack_disconnect(
+    team_id: str,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    deleted = slack_store.disconnect(team_id, principal.tenant_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Slack connection not found")
+    return {"ok": True, "team_id": team_id}
+
+
+def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
+    if not SLACK_SIGNING_SECRET:
+        return False
+    # Replay attack prevention: reject requests older than 5 minutes
+    try:
+        if abs(time.time() - float(timestamp)) > 300:
+            return False
+    except ValueError:
+        return False
+    base = f"v0:{timestamp}:{body.decode()}"
+    expected = "v0=" + hmac.new(
+        SLACK_SIGNING_SECRET.encode(), base.encode(), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: str) -> None:
+    """Background task: run RAG and POST result to Slack response_url."""
+    try:
+        docs = index_store.list_docs(tenant_id)
+        total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
+        if not docs:
+            answer = "No documents have been uploaded to your knowledge base yet."
+        else:
+            search_query = question
+            history: list[dict] = []
+            if hasattr(generator, "rewrite_query"):
+                try:
+                    search_query = generator.rewrite_query(question, history)
+                except Exception:
+                    pass
+
+            query_terms = tokenize(search_query)
+            denom = max(len(query_terms), 1)
+            candidates: list[dict] = []
+            try:
+                q_vec = embedder.embed_query(search_query)
+                candidates = index_store.vector_search(tenant_id, q_vec, k=30)
+            except Exception:
+                pass
+
+            if not candidates:
+                for doc in docs:
+                    chunks = doc.get("chunks") or [
+                        {"page": i + 1, "chunk_index": 0, "text": p}
+                        for i, p in enumerate(doc.get("pages", []))
+                    ]
+                    for ch in chunks:
+                        candidates.append({
+                            "file_name": doc["file_name"], "page": ch.get("page", 1),
+                            "chunk_index": ch.get("chunk_index", 0),
+                            "text": ch.get("text", ""), "vec_score": 0.0,
+                        })
+
+            ranked = []
+            for c in candidates:
+                kw = len(query_terms & tokenize(c["text"])) / denom
+                vec = float(c.get("vec_score", 0.0))
+                score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
+                if score >= 0.05:
+                    ranked.append((round(score, 4), c))
+            ranked.sort(key=lambda t: t[0], reverse=True)
+            top_chunks = [c for _, c in ranked[:6]]
+            answer = generator.generate(question, top_chunks, [])
+            max_score = ranked[0][0] if ranked else 0.0
+            insights_store.record(tenant_id, question, max_score, answer=answer)
+
+        # Build citation footnotes
+        sources = ""
+        if top_chunks if 'top_chunks' in dir() else False:
+            seen = []
+            for c in (top_chunks if 'top_chunks' in dir() else []):
+                ref = f"{c['file_name']} p.{c.get('page', 1)}"
+                if ref not in seen:
+                    seen.append(ref)
+            if seen:
+                sources = "\n_Sources: " + " · ".join(seen) + "_"
+
+        payload = json.dumps({
+            "response_type": "in_channel",
+            "text": f"*{user_name} asked:* {question}\n\n{answer}{sources}",
+        }).encode()
+        req = urllib.request.Request(
+            response_url, data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as exc:
+        log.warning("slack_rag failed tenant=%s err=%s", tenant_id, exc)
+        try:
+            payload = json.dumps({"response_type": "ephemeral", "text": "⚠️ Something went wrong. Try again."}).encode()
+            req = urllib.request.Request(response_url, data=payload,
+                                          headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
+
+
+@app.post("/api/integrations/slack/command")
+async def slack_command(request: Request, background_tasks: BackgroundTasks) -> dict:
+    """Slack slash command handler — no Firebase auth, uses Slack signing secret."""
+    body = await request.body()
+
+    ts = request.headers.get("X-Slack-Request-Timestamp", "")
+    sig = request.headers.get("X-Slack-Signature", "")
+    if SLACK_SIGNING_SECRET and not _verify_slack_signature(body, ts, sig):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    form = await request.form()
+    team_id   = str(form.get("team_id", ""))
+    text      = str(form.get("text", "")).strip()
+    user_name = str(form.get("user_name", "someone"))
+    response_url = str(form.get("response_url", ""))
+
+    tenant_id = slack_store.get_tenant(team_id)
+    if not tenant_id:
+        return {
+            "response_type": "ephemeral",
+            "text": "❌ This Slack workspace isn't connected to RAGaaS. An admin must connect it first at your RAGaaS dashboard.",
+        }
+    if not text:
+        return {"response_type": "ephemeral", "text": "Usage: `/ask [your question]`"}
+
+    log.info("slack_command tenant=%s team=%s user=%s question=%r", tenant_id, team_id, user_name, text)
+    background_tasks.add_task(_run_slack_rag, tenant_id, text, user_name, response_url)
+    return {
+        "response_type": "in_channel",
+        "text": f"⏳ *{user_name}* asked: _{text}_\nSearching your knowledge base…",
+    }

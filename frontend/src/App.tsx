@@ -16,10 +16,12 @@ import { ChatWindow, ChatMessage } from "./components/ChatWindow";
 import { DocumentList, DocumentMeta } from "./components/DocumentList";
 import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
+import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { AuthForm } from "./components/AuthForm";
 import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Privacy } from "./pages/Privacy";
+import { SharePage } from "./pages/SharePage";
 import { DEMO, demoFetch } from "./demoBackend";
 import "./styles.css";
 
@@ -73,9 +75,12 @@ function saveChatHistory(tenantEmail: string, messages: ChatMessage[]) {
   } catch { /* storage full */ }
 }
 
-// Privacy page — simple path check, no router needed
-if (window.location.pathname === "/privacy") {
+// Simple path-based routing — no router library needed
+const path = window.location.pathname;
+if (path === "/privacy") {
   createRoot(document.getElementById("root")!).render(<Privacy />);
+} else if (path.startsWith("/share/")) {
+  createRoot(document.getElementById("root")!).render(<SharePage />);
 } else {
   createRoot(document.getElementById("root")!).render(<App />);
 }
@@ -92,7 +97,7 @@ function App() {
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [members, setMembers]         = useState<Member[]>([]);
-  const [view, setView]               = useState<"chat" | "insights">("chat");
+  const [view, setView]               = useState<"chat" | "insights" | "integrations">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
@@ -177,6 +182,26 @@ function App() {
       const res = await apiFetch(`${API}/api/insights`, { headers: authHeaders() });
       if (!res.ok) return null;
       return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async function handleShare(msg: ChatMessage): Promise<string | null> {
+    const userMsg = messages.slice(0, messages.indexOf(msg)).reverse().find((m) => m.role === "user");
+    try {
+      const res = await apiFetch(`${API}/api/share`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: userMsg?.text ?? "",
+          answer: msg.text,
+          citations: msg.citations ?? [],
+        }),
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body.url as string;
     } catch {
       return null;
     }
@@ -457,20 +482,9 @@ function App() {
           </motion.span>
         )}
         <div className="nav-tabs">
-          <button
-            type="button"
-            className={`nav-tab${view === "chat" ? " active" : ""}`}
-            onClick={() => setView("chat")}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            className={`nav-tab${view === "insights" ? " active" : ""}`}
-            onClick={() => setView("insights")}
-          >
-            Insights
-          </button>
+          <button type="button" className={`nav-tab${view === "chat" ? " active" : ""}`} onClick={() => setView("chat")}>Chat</button>
+          <button type="button" className={`nav-tab${view === "insights" ? " active" : ""}`} onClick={() => setView("insights")}>Insights</button>
+          <button type="button" className={`nav-tab${view === "integrations" ? " active" : ""}`} onClick={() => setView("integrations")}>Integrations</button>
         </div>
         <span className="nav-spacer" />
         <motion.div
@@ -525,6 +539,10 @@ function App() {
               onQuickAsk={(q) => { setView("chat"); setQuestion(q); }}
             />
           </ErrorBoundary>
+        ) : view === "integrations" ? (
+          <ErrorBoundary>
+            <IntegrationsPanel apiUrl={API} authHeaders={authHeaders} appBaseUrl={status?.tenant_id ? `${API}` : API} />
+          </ErrorBoundary>
         ) : (
           <>
             <UploadBar
@@ -541,6 +559,7 @@ function App() {
                 onQuestionChange={setQuestion}
                 onSend={handleSend}
                 onAsk={sendMessage}
+                onShare={handleShare}
                 disabled={!online}
               />
             </ErrorBoundary>

@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, ChevronDown, Copy, Check, Zap, ChevronRight, Search, Sparkles, Layers, Timer, Hash } from "lucide-react";
+import { Send, ChevronDown, Copy, Check, Zap, ChevronRight, Search, Sparkles, Layers, Timer, Hash, Share2, Link } from "lucide-react";
 
 export type Citation = {
   file_name: string;
@@ -35,6 +35,7 @@ interface ChatWindowProps {
   onQuestionChange: (q: string) => void;
   onSend: (e: FormEvent) => void;
   onAsk: (text: string) => void;
+  onShare: (msg: ChatMessage) => Promise<string | null>;
   disabled: boolean;
 }
 
@@ -203,7 +204,41 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function MessageBubble({ msg, index }: { msg: ChatMessage; index: number }) {
+function ShareButton({ msg, onShare }: { msg: ChatMessage; onShare: (m: ChatMessage) => Promise<string | null> }) {
+  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  async function handle() {
+    if (state !== "idle") return;
+    setState("loading");
+    const url = await onShare(msg);
+    if (url) {
+      navigator.clipboard.writeText(url).catch(() => {});
+      setState("done");
+      setTimeout(() => setState("idle"), 2500);
+    } else {
+      setState("idle");
+    }
+  }
+  return (
+    <motion.button
+      type="button"
+      className="msg-copy msg-share"
+      onClick={handle}
+      title={state === "done" ? "Link copied!" : "Share this answer"}
+      whileTap={{ scale: 0.85 }}
+    >
+      <AnimatePresence mode="wait">
+        {state === "done"
+          ? <motion.span key="link" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Link size={11} color="var(--green)" /></motion.span>
+          : state === "loading"
+          ? <motion.span key="spin" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="share-spinner" />
+          : <motion.span key="share" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Share2 size={11} /></motion.span>
+        }
+      </AnimatePresence>
+    </motion.button>
+  );
+}
+
+function MessageBubble({ msg, index, onShare }: { msg: ChatMessage; index: number; onShare: (m: ChatMessage) => Promise<string | null> }) {
   const isUser = msg.role === "user";
   return (
     <motion.div
@@ -220,6 +255,7 @@ function MessageBubble({ msg, index }: { msg: ChatMessage; index: number }) {
             <span className="msg-time">{relativeTime(msg.timestamp)}</span>
           )}
           <CopyButton text={msg.text} />
+          {!isUser && <ShareButton msg={msg} onShare={onShare} />}
         </div>
       </div>
       {!isUser && msg.retrieval && <RetrievalTracePanel r={msg.retrieval} />}
@@ -288,6 +324,7 @@ export function ChatWindow({
   onQuestionChange,
   onSend,
   onAsk,
+  onShare,
   disabled,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -358,7 +395,7 @@ export function ChatWindow({
         {/* Messages */}
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => (
-            <MessageBubble key={i} msg={msg} index={i} />
+            <MessageBubble key={i} msg={msg} index={i} onShare={onShare} />
           ))}
         </AnimatePresence>
 

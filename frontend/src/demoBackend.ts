@@ -93,6 +93,31 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
     return json(cannedAnswer(q));
   }
 
+  if (path.endsWith("/api/share") && method === "POST") {
+    return json({ share_id: "demo-abc123", url: "https://demo.ragaas.app/share/demo-abc123" }, 201);
+  }
+  if (path.includes("/api/share/")) return json({
+    question: "What are the Q3 revenue numbers?",
+    answer: "Q3 revenue was $4.2M, up 18% YoY.",
+    citations: [{ file_name: "Q3_Earnings_Report.pdf", page: 4, score: 0.92 }],
+    created_at: new Date().toISOString(),
+  });
+
+  if (path.endsWith("/api/tenant/widget-keys") && method === "GET") return json([
+    { key_id: "demo-key-1", label: "Company website", created_at: new Date().toISOString() },
+  ]);
+  if (path.endsWith("/api/tenant/widget-keys") && method === "POST") return json({
+    key_id: "demo-key-2", key: "wk_demo_REPLACE_WITH_REAL_KEY", label: "New site", created_at: new Date().toISOString(),
+  }, 201);
+  if (path.includes("/api/tenant/widget-keys/") && method === "DELETE") return json({ ok: true });
+
+  if (path.endsWith("/api/integrations/slack/connections") && method === "GET") return json([]);
+  if (path.endsWith("/api/integrations/slack/connect") && method === "POST") return json({
+    ok: true, team_id: "T_DEMO",
+    instructions: "Add /ask slash command pointing to your Cloud Run URL + /api/integrations/slack/command",
+  });
+  if (path.includes("/api/integrations/slack/connections/") && method === "DELETE") return json({ ok: true });
+
   if (path.endsWith("/api/insights")) {
     return json({
       total_queries: 184,

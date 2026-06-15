@@ -3,6 +3,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "build:demo": "vite build --mode demo",
+    "build:widget": "vite build --config vite.widget.config.ts",
     "type-check": "tsc --noEmit",
     "test:e2e": "playwright test"
   },
