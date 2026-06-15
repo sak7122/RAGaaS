@@ -604,6 +604,13 @@ def get_insights(principal: Annotated[Principal, Depends(principal_from_auth)]) 
     return InsightsResponse(**data)
 
 
+# ── Routes: Slack query log (admin-only feed with user attribution) ───────────
+@app.get("/api/slack/queries")
+def get_slack_queries(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    require_role(principal, "admin")
+    return insights_store.slack_queries(principal.tenant_id)
+
+
 # ── Routes: members ───────────────────────────────────────────────────────────
 @app.get("/api/tenant/members", response_model=list[MemberOut])
 def list_members(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[MemberOut]:
@@ -919,7 +926,8 @@ def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: 
             top_chunks = [c for _, c in ranked[:6]]
             answer = generator.generate(question, top_chunks, [])
             max_score = ranked[0][0] if ranked else 0.0
-            insights_store.record(tenant_id, question, max_score, answer=answer)
+            insights_store.record(tenant_id, question, max_score, answer=answer,
+                                  source="slack", slack_user=user_name)
 
         # Build citation footnotes
         sources = ""

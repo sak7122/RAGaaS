@@ -111,6 +111,11 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
   }, 201);
   if (path.includes("/api/tenant/widget-keys/") && method === "DELETE") return json({ ok: true });
 
+  if (path.endsWith("/api/slack/queries") && method === "GET") return json([
+    { question: "What is the refund policy?", slack_user: "alice", score: 0.21, answer: "No document answers this well.", ts: new Date(Date.now() - 3600000).toISOString() },
+    { question: "What are the Q3 revenue numbers?", slack_user: "bob", score: 0.92, answer: "Q3 revenue was $4.2M, up 18% YoY.", ts: new Date(Date.now() - 7200000).toISOString() },
+    { question: "When does SSO ship?", slack_user: "carol", score: 0.74, answer: "SSO is planned for Q2 2026.", ts: new Date(Date.now() - 86400000).toISOString() },
+  ]);
   if (path.endsWith("/api/integrations/slack/connections") && method === "GET") return json([]);
   if (path.endsWith("/api/integrations/slack/connect") && method === "POST") return json({
     ok: true, team_id: "T_DEMO",

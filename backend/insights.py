@@ -127,9 +127,14 @@ def _aggregate(events: list[dict]) -> dict:
     }
 
 
+SLACK_QUERY_LIMIT = 200   # max events returned from slack_queries()
+
+
 class InsightsStore(Protocol):
-    def record(self, tenant_id: str, question: str, score: float, answer: str = "") -> None: ...
+    def record(self, tenant_id: str, question: str, score: float, answer: str = "",
+               source: str = "chat", slack_user: str = "") -> None: ...
     def summary(self, tenant_id: str) -> dict: ...
+    def slack_queries(self, tenant_id: str) -> list[dict]: ...
     def reset(self) -> None: ...
 
 
@@ -138,18 +143,26 @@ class MemoryInsightsStore:
         self._events: dict[str, list[dict]] = defaultdict(list)
         self._lock = threading.Lock()
 
-    def record(self, tenant_id: str, question: str, score: float, answer: str = "") -> None:
+    def record(self, tenant_id: str, question: str, score: float, answer: str = "",
+               source: str = "chat", slack_user: str = "") -> None:
         with self._lock:
             buf = self._events[tenant_id]
-            buf.append({"question": question, "score": float(score),
-                        "answer": answer,
-                        "ts": datetime.now(timezone.utc).isoformat()})
+            buf.append({
+                "question": question, "score": float(score),
+                "answer": answer, "source": source, "slack_user": slack_user,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
             if len(buf) > WINDOW:
                 del buf[: len(buf) - WINDOW]
 
     def summary(self, tenant_id: str) -> dict:
         with self._lock:
             return _aggregate(list(self._events.get(tenant_id, [])))
+
+    def slack_queries(self, tenant_id: str) -> list[dict]:
+        with self._lock:
+            events = self._events.get(tenant_id, [])
+            return [e for e in reversed(events) if e.get("source") == "slack"][:SLACK_QUERY_LIMIT]
 
     def reset(self) -> None:
         with self._lock:
@@ -163,11 +176,11 @@ class FirestoreInsightsStore:
     def _col(self, tenant_id: str):
         return self._db.collection("tenants").document(tenant_id).collection("query_log")
 
-    def record(self, tenant_id: str, question: str, score: float, answer: str = "") -> None:
+    def record(self, tenant_id: str, question: str, score: float, answer: str = "",
+               source: str = "chat", slack_user: str = "") -> None:
         self._col(tenant_id).add({
-            "question": question,
-            "score": float(score),
-            "answer": answer,
+            "question": question, "score": float(score),
+            "answer": answer, "source": source, "slack_user": slack_user,
             "ts": datetime.now(timezone.utc),
         })
 
@@ -177,8 +190,24 @@ class FirestoreInsightsStore:
         events = [d.to_dict() or {} for d in q.stream()]
         return _aggregate(events)
 
+    def slack_queries(self, tenant_id: str) -> list[dict]:
+        from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: F401
+        q = (
+            self._col(tenant_id)
+            .where("source", "==", "slack")
+            .order_by("ts", direction="DESCENDING")
+            .limit(SLACK_QUERY_LIMIT)
+        )
+        results = []
+        for doc in q.stream():
+            d = doc.to_dict() or {}
+            ts = d.get("ts")
+            if hasattr(ts, "isoformat"):
+                d["ts"] = ts.isoformat()
+            results.append(d)
+        return results
+
     def reset(self) -> None:
-        # Dev-only convenience; prod keeps history.
         pass
 
 

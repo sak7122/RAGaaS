@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Key, Slack, Plus, Trash2, Copy, Check, Code, ChevronDown } from "lucide-react";
+import { Key, Slack, Plus, Trash2, Copy, Check, Code, ChevronDown, RefreshCcw, MessageSquare } from "lucide-react";
 
 interface Props {
   apiUrl: string;
@@ -292,6 +292,87 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
   );
 }
 
+type SlackQuery = {
+  question: string;
+  slack_user: string;
+  score: number;
+  answer: string;
+  ts: string;
+};
+
+function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeaders">) {
+  const [queries, setQueries] = useState<SlackQuery[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const r = await fetch(`${apiUrl}/api/slack/queries`, { headers: authHeaders() });
+      if (r.ok) setQueries(await r.json());
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  function fmtTime(ts: string) {
+    try { return new Date(ts).toLocaleString(); } catch { return ts; }
+  }
+  function confCls(s: number) { return s >= 0.5 ? "good" : s >= 0.3 ? "warn" : "bad"; }
+
+  return (
+    <section className="integrations-section">
+      <h3 className="integrations-section-title">
+        <MessageSquare size={14} /> Slack Questions
+        <button type="button" className="btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={load}>
+          <RefreshCcw size={11} /> Refresh
+        </button>
+      </h3>
+      <p className="integrations-hint">All questions asked via <code>/ask</code> in Slack — visible to admins only.</p>
+
+      {loading ? (
+        <p className="integrations-empty">Loading…</p>
+      ) : queries.length === 0 ? (
+        <p className="integrations-empty">No Slack questions yet. Try <code>/ask</code> in a Slack channel.</p>
+      ) : (
+        <div className="key-list">
+          {queries.map((q, i) => (
+            <motion.div
+              key={i}
+              className="slack-query-card"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.03 }}
+            >
+              <div className="slack-query-header" onClick={() => setExpanded(expanded === i ? null : i)}>
+                <span className="slack-query-user">@{q.slack_user}</span>
+                <span className="slack-query-q">{q.question}</span>
+                <span className={`faq-confidence ${confCls(q.score)}`}>{Math.round(q.score * 100)}%</span>
+                <span className="slack-query-time">{fmtTime(q.ts)}</span>
+                <ChevronDown size={12} className={`faq-chevron${expanded === i ? " open" : ""}`} />
+              </div>
+              <AnimatePresence>
+                {expanded === i && q.answer && (
+                  <motion.div
+                    className="slack-query-answer"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                  >
+                    {q.answer}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function IntegrationsPanel({ apiUrl, authHeaders }: Props) {
   return (
     <div className="insights-wrap">
@@ -301,8 +382,9 @@ export function IntegrationsPanel({ apiUrl, authHeaders }: Props) {
           <p className="insights-sub">Embed RAGaaS anywhere — your website, Slack, or any tool.</p>
         </div>
       </div>
-      <WidgetSection apiUrl={apiUrl} authHeaders={authHeaders} />
+      <SlackQueryLog apiUrl={apiUrl} authHeaders={authHeaders} />
       <SlackSection apiUrl={apiUrl} authHeaders={authHeaders} />
+      <WidgetSection apiUrl={apiUrl} authHeaders={authHeaders} />
     </div>
   );
 }
