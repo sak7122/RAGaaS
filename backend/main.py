@@ -81,7 +81,7 @@ if config.env == "development":
 # (widget embeds on 3rd-party sites). Widget keys replace browser credentials so
 # allow_credentials is NOT set, which is compatible with Access-Control-Allow-Origin: *.
 class WidgetCORSMiddleware(BaseHTTPMiddleware):
-    _WIDGET_PATHS = ("/api/widget/", "/api/share/", "/api/integrations/slack/")
+    _WIDGET_PATHS = ("/api/widget/", "/api/share/")
 
     async def dispatch(self, request: Request, call_next):
         is_widget = any(request.url.path.startswith(p) for p in self._WIDGET_PATHS)
