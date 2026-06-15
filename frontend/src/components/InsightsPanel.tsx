@@ -87,7 +87,9 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
 
   async function load() {
     setLoading(true);
-    setData(await fetchInsights());
+    const result = await fetchInsights();
+    if (result) result.faqs = result.faqs ?? [];
+    setData(result);
     setLoading(false);
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
