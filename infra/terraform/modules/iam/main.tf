@@ -1,5 +1,9 @@
 variable "project_id" { type = string }
 
+data "google_project" "project" {
+  project_id = var.project_id
+}
+
 # ── GitHub Actions deployer SA ────────────────────────────────────────────────
 resource "google_service_account" "deployer" {
   project      = var.project_id
@@ -60,4 +64,12 @@ resource "google_project_iam_member" "runtime" {
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+# ── Default Compute SA (used by Cloud Build / gcloud run deploy --source .) ──
+# Needs storage access to read/write the Cloud Build staging bucket.
+resource "google_project_iam_member" "compute_sa_storage" {
+  project = var.project_id
+  role    = "roles/storage.objectAdmin"
+  member  = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
 }
