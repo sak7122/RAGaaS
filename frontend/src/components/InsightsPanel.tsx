@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { TrendingUp, AlertTriangle, MessageSquare, Target, RefreshCcw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { TrendingUp, AlertTriangle, MessageSquare, Target, RefreshCcw, ChevronDown, Zap, BookOpen } from "lucide-react";
 
 export type Insights = {
   total_queries: number;
@@ -8,11 +8,13 @@ export type Insights = {
   answered_rate: number;
   top_questions: { question: string; count: number; avg_score: number }[];
   gaps: { question: string; count: number; best_score: number; avg_score: number }[];
+  faqs: { question: string; answer: string; score: number; count: number }[];
   window: number;
 };
 
 interface Props {
   fetchInsights: () => Promise<Insights | null>;
+  onQuickAsk: (q: string) => void;
 }
 
 function StatCard({ icon, label, value, tone }: {
@@ -32,7 +34,54 @@ function StatCard({ icon, label, value, tone }: {
   );
 }
 
-export function InsightsPanel({ fetchInsights }: Props) {
+function ConfidencePip({ score }: { score: number }) {
+  const pct = Math.round(score * 100);
+  const cls = pct >= 70 ? "good" : pct >= 50 ? "warn" : "bad";
+  return <span className={`faq-confidence ${cls}`}>{pct}% match</span>;
+}
+
+function FaqItem({ item, onAsk }: { item: Insights["faqs"][0]; onAsk: (q: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <motion.div className="faq-card" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+      <button
+        type="button"
+        className="faq-header"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className="faq-question">{item.question}</span>
+        <span className="faq-header-right">
+          <ConfidencePip score={item.score} />
+          <span className="faq-count">{item.count}×</span>
+          <ChevronDown size={14} className={`faq-chevron${open ? " open" : ""}`} />
+        </span>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="faq-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <p className="faq-answer">{item.answer}</p>
+            <button
+              type="button"
+              className="btn-ask-this"
+              onClick={() => onAsk(item.question)}
+            >
+              <Zap size={12} /> Ask again in chat
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
   const [data, setData] = useState<Insights | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -89,7 +138,22 @@ export function InsightsPanel({ fetchInsights }: Props) {
         />
       </div>
 
-      {/* Knowledge gaps — the differentiator */}
+      {/* FAQ — browsable answers for new members */}
+      {data.faqs.length > 0 && (
+        <section className="insights-section">
+          <h3 className="insights-section-title">
+            <BookOpen size={14} /> Team FAQ
+            <span className="insights-section-hint">Tap a question to see the answer</span>
+          </h3>
+          <div className="faq-list">
+            {data.faqs.map((item) => (
+              <FaqItem key={item.question} item={item} onAsk={onQuickAsk} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Knowledge gaps */}
       <section className="insights-section">
         <h3 className="insights-section-title">
           <AlertTriangle size={14} /> Knowledge gaps
@@ -120,19 +184,25 @@ export function InsightsPanel({ fetchInsights }: Props) {
         )}
       </section>
 
-      {/* Top questions */}
+      {/* Top questions with quick-ask */}
       <section className="insights-section">
         <h3 className="insights-section-title">
           <MessageSquare size={14} /> Top questions
+          <span className="insights-section-hint">Click to ask in chat</span>
         </h3>
         <div className="topq-list">
           {data.top_questions.map((q, i) => (
             <motion.div
               key={q.question}
-              className="topq-row"
+              className="topq-row topq-row-clickable"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: i * 0.04 }}
+              onClick={() => onQuickAsk(q.question)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === "Enter" && onQuickAsk(q.question)}
+              title="Click to ask this in chat"
             >
               <span className="topq-rank">{i + 1}</span>
               <span className="topq-text">{q.question}</span>
@@ -143,6 +213,7 @@ export function InsightsPanel({ fetchInsights }: Props) {
                   style={{ width: `${Math.min(q.avg_score * 100, 100)}%` }}
                 />
               </span>
+              <Zap size={11} className="topq-ask-icon" />
             </motion.div>
           ))}
         </div>

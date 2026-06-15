@@ -111,6 +111,11 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
         { question: "What is the cancellation window?", count: 9, best_score: 0.15, avg_score: 0.12 },
         { question: "Do you offer enterprise SLAs?", count: 6, best_score: 0.19, avg_score: 0.14 },
       ],
+      faqs: [
+        { question: "How do I reset my password?", answer: "Navigate to the login page and click 'Forgot password'. You will receive a reset link within 2 minutes. Links expire after 24 hours.", score: 0.81, count: 19 },
+        { question: "What are the Q3 revenue numbers?", answer: "Q3 revenue was $4.2M, up 18% YoY. ARR crossed $16M. EBITDA margin improved to 12% from 7% last quarter.", score: 0.92, count: 14 },
+        { question: "When does the roadmap ship SSO?", answer: "SSO (SAML 2.0 + OIDC) is planned for Q2 2026 in the Enterprise tier. Beta access available to customers on the growth plan.", score: 0.74, count: 11 },
+      ],
     });
   }
 

@@ -518,8 +518,8 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         latency_ms=latency_ms,
     )
 
-    # Record for knowledge analytics + gap detection
-    insights_store.record(tenant_id, req.message, retrieval.max_score)
+    # Record for knowledge analytics + gap detection (answer stored when confidence is high)
+    insights_store.record(tenant_id, req.message, retrieval.max_score, answer=answer)
 
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",

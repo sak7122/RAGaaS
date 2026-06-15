@@ -520,7 +520,10 @@ function App() {
       <main className="workspace">
         {view === "insights" ? (
           <ErrorBoundary>
-            <InsightsPanel fetchInsights={fetchInsights} />
+            <InsightsPanel
+              fetchInsights={fetchInsights}
+              onQuickAsk={(q) => { setView("chat"); setQuestion(q); }}
+            />
           </ErrorBoundary>
         ) : (
           <>
