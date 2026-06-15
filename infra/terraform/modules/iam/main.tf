@@ -67,9 +67,19 @@ resource "google_project_iam_member" "runtime" {
 }
 
 # ── Default Compute SA (used by Cloud Build / gcloud run deploy --source .) ──
-# Needs storage access to read/write the Cloud Build staging bucket.
-resource "google_project_iam_member" "compute_sa_storage" {
+# Needs storage + AR write + log write to build and push images via Cloud Build.
+locals {
+  compute_sa_roles = [
+    "roles/storage.objectAdmin",      # read source zip from Cloud Build staging bucket
+    "roles/artifactregistry.writer",  # push built image to AR
+    "roles/logging.logWriter",        # write build logs to Cloud Logging
+  ]
+}
+
+resource "google_project_iam_member" "compute_sa" {
+  for_each = toset(local.compute_sa_roles)
+
   project = var.project_id
-  role    = "roles/storage.objectAdmin"
+  role    = each.value
   member  = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
 }

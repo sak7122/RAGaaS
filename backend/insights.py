@@ -191,20 +191,20 @@ class FirestoreInsightsStore:
         return _aggregate(events)
 
     def slack_queries(self, tenant_id: str) -> list[dict]:
-        from google.cloud.firestore_v1.base_query import FieldFilter  # noqa: F401
-        q = (
-            self._col(tenant_id)
-            .where("source", "==", "slack")
-            .order_by("ts", direction="DESCENDING")
-            .limit(SLACK_QUERY_LIMIT)
-        )
+        # Scan recent events ordered by ts (existing index) and filter in Python —
+        # avoids a composite index on (source, ts).
+        q = self._col(tenant_id).order_by("ts", direction="DESCENDING").limit(WINDOW)
         results = []
         for doc in q.stream():
             d = doc.to_dict() or {}
+            if d.get("source") != "slack":
+                continue
             ts = d.get("ts")
             if hasattr(ts, "isoformat"):
                 d["ts"] = ts.isoformat()
             results.append(d)
+            if len(results) >= SLACK_QUERY_LIMIT:
+                break
         return results
 
     def reset(self) -> None:

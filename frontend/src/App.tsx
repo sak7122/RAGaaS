@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { motion } from "framer-motion";
 import { LogOut } from "lucide-react";
+import { ToastPortal } from "./components/ui";
 import {
   devSignInTenant,
   signInWithPassword,
@@ -416,6 +417,7 @@ function App() {
   if (!USE_EMULATOR && !online) {
     return (
       <div className="shell">
+        <ToastPortal />
         <nav className="global-nav">
           <span className="nav-brand">RAGaaS</span>
           <span className="nav-spacer" />
@@ -456,6 +458,7 @@ function App() {
 
   return (
     <div className="shell">
+      <ToastPortal />
       {inviteJoined && (
         <div className="invite-banner success" onClick={() => setInviteJoined(null)}>
           ✅ You've joined the workspace. You can now ask questions about its
@@ -482,9 +485,25 @@ function App() {
           </motion.span>
         )}
         <div className="nav-tabs">
-          <button type="button" className={`nav-tab${view === "chat" ? " active" : ""}`} onClick={() => setView("chat")}>Chat</button>
-          <button type="button" className={`nav-tab${view === "insights" ? " active" : ""}`} onClick={() => setView("insights")}>Insights</button>
-          <button type="button" className={`nav-tab${view === "integrations" ? " active" : ""}`} onClick={() => setView("integrations")}>Integrations</button>
+          {(["chat", "insights", "integrations"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={`nav-tab${view === v ? " active" : ""}`}
+              onClick={() => setView(v)}
+            >
+              {view === v && (
+                <motion.span
+                  className="nav-tab-indicator"
+                  layoutId="nav-tab-indicator"
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                />
+              )}
+              <span className="nav-tab-label">
+                {v.charAt(0).toUpperCase() + v.slice(1)}
+              </span>
+            </button>
+          ))}
         </div>
         <span className="nav-spacer" />
         <motion.div

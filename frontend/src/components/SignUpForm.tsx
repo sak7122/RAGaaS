@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
-import { motion } from "framer-motion";
-import { Lock, Mail, Eye, EyeOff, Loader2, User, Building2, Check } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Lock, Mail, Eye, EyeOff, Loader2, User, Building2, Check, AlertCircle } from "lucide-react";
+import { Aurora, GradientText, ShinyButton } from "./ui";
 
 export interface SignUpProfile {
   name: string;
@@ -53,16 +54,25 @@ export function SignUpForm({ onSignUp, onBackToSignIn, error }: SignUpFormProps)
   }
 
   return (
-    <div className="auth-form-wrap">
+    <div className="auth-scene">
+      <Aurora />
+
       <motion.div
-        className="auth-card auth-card-wide"
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+        className="auth-card auth-card-wide glass-card"
+        initial={{ opacity: 0, y: 24, scale: 0.96, filter: "blur(8px)" }}
+        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+        transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
       >
         <div className="auth-brand">
-          <span className="auth-brand-mark">R</span>
-          <span className="auth-brand-name">RAGaaS</span>
+          <motion.span
+            className="auth-brand-mark"
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.15, duration: 0.45, ease: [0.34, 1.56, 0.64, 1] }}
+          >
+            R
+          </motion.span>
+          <span className="auth-brand-name"><GradientText>RAGaaS</GradientText></span>
         </div>
 
         <h2 className="auth-title">Create your workspace</h2>
@@ -71,26 +81,26 @@ export function SignUpForm({ onSignUp, onBackToSignIn, error }: SignUpFormProps)
         <form className="auth-form" onSubmit={handleSubmit}>
           <div className="auth-row">
             <div className="auth-field">
-              <User size={15} color="var(--ink-48)" />
-              <input className="chat-input" placeholder="Full name" value={name}
+              <User size={15} className="auth-field-icon" />
+              <input className="auth-input" placeholder="Full name" value={name}
                      onChange={(e) => setName(e.target.value)} autoComplete="name" autoFocus required />
             </div>
             <div className="auth-field">
-              <Building2 size={15} color="var(--ink-48)" />
-              <input className="chat-input" placeholder="Workspace / company" value={workspace}
+              <Building2 size={15} className="auth-field-icon" />
+              <input className="auth-input" placeholder="Workspace / company" value={workspace}
                      onChange={(e) => setWorkspace(e.target.value)} autoComplete="organization" required />
             </div>
           </div>
 
           <div className="auth-field">
-            <Mail size={15} color="var(--ink-48)" />
-            <input type="email" className="chat-input" placeholder="Work email" value={email}
+            <Mail size={15} className="auth-field-icon" />
+            <input type="email" className="auth-input" placeholder="Work email" value={email}
                    onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
           </div>
 
           <div className="auth-field">
-            <Lock size={15} color="var(--ink-48)" />
-            <input type={showPw ? "text" : "password"} className="chat-input" placeholder="Password" value={password}
+            <Lock size={15} className="auth-field-icon" />
+            <input type={showPw ? "text" : "password"} className="auth-input" placeholder="Password" value={password}
                    onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" required />
             <button type="button" className="auth-eye" tabIndex={-1}
                     onClick={() => setShowPw((v) => !v)} aria-label="Toggle password">
@@ -102,7 +112,12 @@ export function SignUpForm({ onSignUp, onBackToSignIn, error }: SignUpFormProps)
             <div className="pw-strength">
               <div className="pw-bars">
                 {[0, 1, 2, 3, 4].map((i) => (
-                  <span key={i} className={`pw-bar${i < strength.score ? ` s${Math.min(strength.score, 5)}` : ""}`} />
+                  <motion.span
+                    key={i}
+                    className={`pw-bar${i < strength.score ? ` s${Math.min(strength.score, 5)}` : ""}`}
+                    animate={{ opacity: i < strength.score ? 1 : 0.3 }}
+                    transition={{ duration: 0.2 }}
+                  />
                 ))}
               </div>
               <span className={`pw-label s${Math.min(strength.score, 5)}`}>{strength.label}</span>
@@ -110,34 +125,46 @@ export function SignUpForm({ onSignUp, onBackToSignIn, error }: SignUpFormProps)
           )}
 
           <div className={`auth-field${mismatch ? " invalid" : ""}`}>
-            <Lock size={15} color="var(--ink-48)" />
-            <input type={showPw ? "text" : "password"} className="chat-input" placeholder="Confirm password"
+            <Lock size={15} className="auth-field-icon" />
+            <input type={showPw ? "text" : "password"} className="auth-input" placeholder="Confirm password"
                    value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" required />
-            {confirm.length > 0 && !mismatch && <Check size={15} color="var(--green)" />}
+            <AnimatePresence>
+              {confirm.length > 0 && !mismatch && (
+                <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}>
+                  <Check size={15} color="var(--green)" />
+                </motion.span>
+              )}
+            </AnimatePresence>
           </div>
 
           {pwTooShort && <div className="auth-hint">Password must be at least 6 characters.</div>}
-          {mismatch && <div className="auth-hint">Passwords don't match.</div>}
+          {mismatch && <div className="auth-hint error">Passwords don't match.</div>}
 
           <label className="auth-check">
             <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
             <span>I agree to the <a href="/privacy" className="auth-privacy-link">Privacy &amp; Data Policy</a>.</span>
           </label>
 
-          {error && (
-            <motion.div className="error-banner" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}>
-              {error}
-            </motion.div>
-          )}
+          <AnimatePresence mode="wait">
+            {error && (
+              <motion.div className="error-banner"
+                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}>
+                <AlertCircle size={13} /> {error}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          <button type="submit" className="btn-primary auth-submit" disabled={!canSubmit}>
-            {loading ? <Loader2 size={16} className="auth-spin" /> : "Create workspace"}
-          </button>
+          <ShinyButton type="submit" className="auth-submit" disabled={!canSubmit}>
+            {loading ? <Loader2 size={16} className="auth-spin" /> : "Create workspace →"}
+          </ShinyButton>
         </form>
 
-        <button type="button" className="auth-toggle" onClick={onBackToSignIn}>
-          Already have an account? Sign in
-        </button>
+        <div className="auth-footer">
+          <button type="button" className="auth-toggle" onClick={onBackToSignIn}>
+            Already have an account? <span className="auth-toggle-accent">Sign in</span>
+          </button>
+        </div>
       </motion.div>
     </div>
   );

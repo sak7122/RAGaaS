@@ -1,6 +1,11 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, ChevronDown, Copy, Check, Zap, ChevronRight, Search, Sparkles, Layers, Timer, Hash, Share2, Link } from "lucide-react";
+import {
+  Send, ChevronDown, Copy, Check, Zap, ChevronRight,
+  Search, Sparkles, Layers, Timer, Hash, Share2, Link,
+  BookOpen, BarChart2, FileText,
+} from "lucide-react";
+import { StreamingText, toast } from "./ui";
 
 export type Citation = {
   file_name: string;
@@ -57,11 +62,11 @@ function CitationCard({ c }: { c: Citation }) {
       className="citation-card"
       onClick={() => setExpanded((v) => !v)}
       whileHover={{ scale: 1.01 }}
-      whileTap={{ scale: 0.99 }}
+      whileTap={{ scale: 0.98 }}
       layout
     >
       <span className="citation-header">
-        <span className="citation-file-icon">📄</span>
+        <FileText size={11} className="citation-file-icon" />
         <span className="citation-meta">{shortName}</span>
         <span className="citation-page">p.{c.page}</span>
         {typeof c.score === "number" && (
@@ -71,16 +76,13 @@ function CitationCard({ c }: { c: Citation }) {
                 className="citation-score-fill"
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(c.score * 100, 100)}%` }}
-                transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+                transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
               />
             </span>
             <span className="citation-score-num">{Math.round(c.score * 100)}%</span>
           </span>
         )}
-        <ChevronDown
-          size={11}
-          className={`citation-chevron${expanded ? " flipped" : ""}`}
-        />
+        <ChevronDown size={11} className={`citation-chevron${expanded ? " flipped" : ""}`} />
       </span>
       <AnimatePresence>
         {expanded && (
@@ -103,10 +105,10 @@ function CitationCard({ c }: { c: Citation }) {
 function RetrievalTracePanel({ r }: { r: RetrievalTrace }) {
   const [open, setOpen] = useState(false);
   const steps = [
-    { icon: Sparkles, label: "Embed query", detail: `${r.query_terms.length} terms` },
-    { icon: Search,   label: r.engine,       detail: `${r.chunks_searched} chunks scanned` },
-    { icon: Layers,   label: "Rank candidates", detail: `${r.candidates_ranked} matched` },
-    { icon: Hash,     label: "Select top-k", detail: `${r.top_k} returned · best ${Math.round(r.max_score * 100)}%` },
+    { icon: Sparkles, label: "Embed query",       detail: `${r.query_terms.length} terms` },
+    { icon: Search,   label: r.engine,             detail: `${r.chunks_searched} chunks scanned` },
+    { icon: Layers,   label: "Rank candidates",    detail: `${r.candidates_ranked} matched` },
+    { icon: Hash,     label: "Select top-k",       detail: `${r.top_k} returned · best ${Math.round(r.max_score * 100)}%` },
   ];
   return (
     <div className="retrieval">
@@ -121,11 +123,11 @@ function RetrievalTracePanel({ r }: { r: RetrievalTrace }) {
           <Search size={12} />
           <span className="retrieval-engine-name">{r.engine}</span>
         </span>
+        <span className="retrieval-stat"><Timer size={11} /> {r.latency_ms} ms</span>
+        <span className="retrieval-stat">{r.chunks_searched} chunks</span>
         <span className="retrieval-stat">
-          <Timer size={11} /> {r.latency_ms} ms
-        </span>
-        <span className="retrieval-stat">
-          {r.chunks_searched} chunks
+          <BarChart2 size={11} />
+          {Math.round(r.max_score * 100)}% match
         </span>
         <ChevronDown size={13} className={`retrieval-chevron${open ? " flipped" : ""}`} />
       </motion.button>
@@ -183,17 +185,12 @@ function CopyButton({ text }: { text: string }) {
   function handleCopy() {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
+      toast("Copied to clipboard");
       setTimeout(() => setCopied(false), 1500);
     });
   }
   return (
-    <motion.button
-      type="button"
-      className="msg-copy"
-      onClick={handleCopy}
-      title="Copy"
-      whileTap={{ scale: 0.85 }}
-    >
+    <motion.button type="button" className="msg-action-btn" onClick={handleCopy} title="Copy" whileTap={{ scale: 0.8 }}>
       <AnimatePresence mode="wait">
         {copied
           ? <motion.span key="check" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Check size={11} color="var(--green)" /></motion.span>
@@ -212,6 +209,7 @@ function ShareButton({ msg, onShare }: { msg: ChatMessage; onShare: (m: ChatMess
     const url = await onShare(msg);
     if (url) {
       navigator.clipboard.writeText(url).catch(() => {});
+      toast("Share link copied!");
       setState("done");
       setTimeout(() => setState("idle"), 2500);
     } else {
@@ -221,16 +219,16 @@ function ShareButton({ msg, onShare }: { msg: ChatMessage; onShare: (m: ChatMess
   return (
     <motion.button
       type="button"
-      className="msg-copy msg-share"
+      className="msg-action-btn"
       onClick={handle}
       title={state === "done" ? "Link copied!" : "Share this answer"}
-      whileTap={{ scale: 0.85 }}
+      whileTap={{ scale: 0.8 }}
     >
       <AnimatePresence mode="wait">
         {state === "done"
-          ? <motion.span key="link" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Link size={11} color="var(--green)" /></motion.span>
+          ? <motion.span key="link"  initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Link size={11} color="var(--green)" /></motion.span>
           : state === "loading"
-          ? <motion.span key="spin" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="share-spinner" />
+          ? <motion.span key="spin"  initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="share-spinner" />
           : <motion.span key="share" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Share2 size={11} /></motion.span>
         }
       </AnimatePresence>
@@ -238,22 +236,42 @@ function ShareButton({ msg, onShare }: { msg: ChatMessage; onShare: (m: ChatMess
   );
 }
 
-function MessageBubble({ msg, index, onShare }: { msg: ChatMessage; index: number; onShare: (m: ChatMessage) => Promise<string | null> }) {
+function MessageBubble({
+  msg,
+  isNewest,
+  onShare,
+}: {
+  msg: ChatMessage;
+  isNewest: boolean;
+  onShare: (m: ChatMessage) => Promise<string | null>;
+}) {
   const isUser = msg.role === "user";
   return (
     <motion.div
       className={`message ${msg.role}`}
-      initial={{ opacity: 0, y: 12, scale: 0.97 }}
+      initial={{ opacity: 0, y: 14, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1], delay: 0 }}
+      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
       layout
     >
+      {!isUser && (
+        <div className="msg-avatar-row">
+          <span className="msg-ai-avatar">
+            <Sparkles size={10} />
+          </span>
+          <span className="msg-ai-label">RAGaaS</span>
+        </div>
+      )}
       <div className="bubble-wrap">
-        <div className="bubble">{msg.text}</div>
-        <div className="bubble-meta">
-          {msg.timestamp && (
-            <span className="msg-time">{relativeTime(msg.timestamp)}</span>
+        <div className={`bubble ${isUser ? "bubble-user" : "bubble-ai"}`}>
+          {isUser ? (
+            msg.text
+          ) : (
+            <StreamingText text={msg.text} active={isNewest && !isUser} />
           )}
+        </div>
+        <div className="bubble-meta">
+          {msg.timestamp && <span className="msg-time">{relativeTime(msg.timestamp)}</span>}
           <CopyButton text={msg.text} />
           {!isUser && <ShareButton msg={msg} onShare={onShare} />}
         </div>
@@ -264,9 +282,11 @@ function MessageBubble({ msg, index, onShare }: { msg: ChatMessage; index: numbe
           className="citations"
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.15, duration: 0.25 }}
+          transition={{ delay: 0.2, duration: 0.25 }}
         >
-          <span className="citations-label">Sources</span>
+          <span className="citations-label">
+            <BookOpen size={11} /> Sources
+          </span>
           {msg.citations.map((c, i) => (
             <CitationCard key={`${c.file_name}-${c.page}-${i}`} c={c} />
           ))}
@@ -312,9 +332,10 @@ function AutoTextarea({
 }
 
 const SUGGESTIONS = [
-  "How many PTO days do employees get?",
-  "What is the minimum password length?",
-  "What are the vendor payment terms?",
+  { icon: FileText,   text: "Summarize the key documents" },
+  { icon: Search,     text: "What is the refund policy?" },
+  { icon: BarChart2,  text: "Show me the Q3 revenue numbers" },
+  { icon: BookOpen,   text: "What are the onboarding steps?" },
 ];
 
 export function ChatWindow({
@@ -328,6 +349,8 @@ export function ChatWindow({
   disabled,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const assistantIdxs = messages.map((m, i) => ({ m, i })).filter(({ m }) => m.role === "assistant");
+  const lastAssistantIdx = assistantIdxs.length > 0 ? assistantIdxs[assistantIdxs.length - 1].i : -1;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -351,42 +374,64 @@ export function ChatWindow({
           {messages.length === 0 && !isLoading && (
             <motion.div
               className="empty-state"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.35, ease: "easeOut" }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35 }}
             >
               <motion.div
-                className="empty-icon-wrap float"
-                animate={{ y: [0, -8, 0] }}
-                transition={{ duration: 3, ease: "easeInOut", repeat: Infinity }}
+                className="empty-icon-wrap"
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
               >
-                <Zap size={28} strokeWidth={1.5} />
+                <motion.div
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 3.2, ease: "easeInOut", repeat: Infinity }}
+                >
+                  <Zap size={28} strokeWidth={1.5} />
+                </motion.div>
               </motion.div>
 
-              <h3 className="empty-title">Ask anything about your documents</h3>
-              <p className="empty-body">
+              <motion.h3
+                className="empty-title"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15, duration: 0.35 }}
+              >
+                Ask anything about your documents
+              </motion.h3>
+              <motion.p
+                className="empty-body"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22, duration: 0.3 }}
+              >
                 Your knowledge base is ready. Try one of these:
-              </p>
+              </motion.p>
 
               <div className="empty-suggestions">
-                {SUGGESTIONS.map((s, i) => (
-                  <motion.button
-                    key={s}
-                    type="button"
-                    className="suggestion-chip"
-                    onClick={() => onAsk(s)}
-                    disabled={disabled}
-                    initial={{ opacity: 0, x: -12 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.1 + i * 0.08, duration: 0.28, ease: "easeOut" }}
-                    whileHover={{ x: 4 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <ChevronRight size={13} className="suggestion-chip-icon" />
-                    {s}
-                  </motion.button>
-                ))}
+                {SUGGESTIONS.map((s, i) => {
+                  const Icon = s.icon;
+                  return (
+                    <motion.button
+                      key={s.text}
+                      type="button"
+                      className="suggestion-chip"
+                      onClick={() => onAsk(s.text)}
+                      disabled={disabled}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 + i * 0.07, duration: 0.28 }}
+                      whileHover={{ y: -2, boxShadow: "var(--shadow-md)" }}
+                      whileTap={{ scale: 0.97 }}
+                    >
+                      <Icon size={13} className="suggestion-chip-icon" />
+                      {s.text}
+                      <ChevronRight size={12} className="suggestion-chip-arrow" />
+                    </motion.button>
+                  );
+                })}
               </div>
             </motion.div>
           )}
@@ -395,7 +440,12 @@ export function ChatWindow({
         {/* Messages */}
         <AnimatePresence initial={false}>
           {messages.map((msg, i) => (
-            <MessageBubble key={i} msg={msg} index={i} onShare={onShare} />
+            <MessageBubble
+              key={i}
+              msg={msg}
+              isNewest={i === lastAssistantIdx}
+              onShare={onShare}
+            />
           ))}
         </AnimatePresence>
 
@@ -409,8 +459,14 @@ export function ChatWindow({
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.22 }}
             >
+              <div className="msg-avatar-row">
+                <span className="msg-ai-avatar">
+                  <Sparkles size={10} />
+                </span>
+                <span className="msg-ai-label">RAGaaS</span>
+              </div>
               <div className="bubble-wrap">
-                <div className="bubble loading-bubble">
+                <div className="bubble bubble-ai loading-bubble">
                   <span className="loading-dot" />
                   <span className="loading-dot" />
                   <span className="loading-dot" />
@@ -424,24 +480,31 @@ export function ChatWindow({
       </div>
 
       {/* Input */}
-      <form className="chat-form" onSubmit={onSend}>
+      <motion.form
+        className="chat-form"
+        onSubmit={onSend}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.3 }}
+      >
         <AutoTextarea
           value={question}
           onChange={onQuestionChange}
           onKeyDown={handleKeyDown}
-          placeholder="Ask a question… (Enter to send, Shift+Enter for new line)"
+          placeholder="Ask a question… (Enter to send, Shift+Enter for newline)"
           disabled={disabled || isLoading}
         />
         <motion.button
           className="btn-send"
           type="submit"
           disabled={disabled || isLoading || !question.trim()}
-          whileHover={{ scale: 1.06 }}
-          whileTap={{ scale: 0.90 }}
+          whileHover={{ scale: 1.08 }}
+          whileTap={{ scale: 0.88 }}
+          transition={{ type: "spring", stiffness: 400, damping: 17 }}
         >
           <Send size={15} />
         </motion.button>
-      </form>
+      </motion.form>
     </div>
   );
 }
