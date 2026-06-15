@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   TrendingUp, AlertTriangle, MessageSquare, Target,
-  RefreshCcw, ChevronDown, Zap, BookOpen,
+  RefreshCcw, ChevronDown, Zap, BookOpen, Sparkles, CheckCircle2,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -24,24 +24,40 @@ interface Props {
   onQuickAsk: (q: string) => void;
 }
 
-function StatCard({
-  icon, label, value, to, suffix, tone, delay,
+// ── Ring gauge — animated SVG arc for a 0–100 percentage ──────────────────────
+function RingGauge({
+  value, label, icon, tone, delay,
 }: {
-  icon: React.ReactNode;
+  value: number;
   label: string;
-  value?: string;
-  to?: number;
-  suffix?: string;
-  tone?: "good" | "warn" | "bad";
-  delay?: number;
+  icon: React.ReactNode;
+  tone: "good" | "warn" | "bad";
+  delay: number;
 }) {
+  const r = 32;
+  const circ = 2 * Math.PI * r;
+  const pct = Math.max(0, Math.min(100, value));
   return (
-    <BlurIn delay={delay ?? 0} className={`insight-stat${tone ? ` ${tone}` : ""}`}>
-      <span className="insight-stat-icon">{icon}</span>
-      <span className="insight-stat-value">
-        {to !== undefined ? <CountUp to={to} suffix={suffix ?? ""} /> : value}
-      </span>
-      <span className="insight-stat-label">{label}</span>
+    <BlurIn delay={delay} className={`gauge-card ${tone}`}>
+      <div className="gauge">
+        <svg viewBox="0 0 80 80" className="gauge-svg">
+          <circle cx="40" cy="40" r={r} className="gauge-track" />
+          <motion.circle
+            cx="40" cy="40" r={r}
+            className="gauge-fill"
+            strokeDasharray={circ}
+            initial={{ strokeDashoffset: circ }}
+            animate={{ strokeDashoffset: circ * (1 - pct / 100) }}
+            transition={{ duration: 1.1, delay: delay + 0.1, ease: [0.4, 0, 0.2, 1] }}
+            strokeLinecap="round"
+            transform="rotate(-90 40 40)"
+          />
+        </svg>
+        <span className="gauge-center">
+          <CountUp to={Math.round(pct)} suffix="%" />
+        </span>
+      </div>
+      <span className="gauge-label">{icon} {label}</span>
     </BlurIn>
   );
 }
@@ -101,8 +117,8 @@ function LoadingSkeleton() {
           <Skeleton style={{ width: 300, height: 16 }} />
         </div>
       </div>
-      <div className="insight-stats">
-        {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 90, borderRadius: 16 }} />)}
+      <div className="insights-hero">
+        {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 132, borderRadius: 18 }} />)}
       </div>
       <Skeleton style={{ height: 220, borderRadius: 16, marginTop: 16 }} />
     </div>
@@ -143,6 +159,7 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
 
   const conf = Math.round(data.avg_confidence * 100);
   const answered = Math.round(data.answered_rate * 100);
+  const gapCount = data.gaps.length;
 
   const chartData = data.top_questions.slice(0, 6).map((q) => ({
     question: q.question.length > 32 ? q.question.slice(0, 30) + "…" : q.question,
@@ -169,35 +186,86 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
         </motion.button>
       </div>
 
-      {/* Stats row */}
-      <div className="insight-stats">
-        <StatCard
-          icon={<MessageSquare size={16} />}
-          label="Questions asked"
-          to={data.total_queries}
-          delay={0}
-        />
-        <StatCard
-          icon={<TrendingUp size={16} />}
+      {/* Hero — headline count + two ring gauges */}
+      <div className="insights-hero">
+        <BlurIn delay={0} className="hero-count">
+          <span className="hero-count-icon"><MessageSquare size={18} /></span>
+          <span className="hero-count-value"><CountUp to={data.total_queries} /></span>
+          <span className="hero-count-label">Questions asked</span>
+          <span className="hero-count-foot">last {data.window.toLocaleString()} queries</span>
+        </BlurIn>
+        <RingGauge
+          value={conf}
           label="Avg confidence"
-          to={conf}
-          suffix="%"
+          icon={<TrendingUp size={12} />}
           tone={conf >= 60 ? "good" : conf >= 35 ? "warn" : "bad"}
           delay={0.08}
         />
-        <StatCard
-          icon={<Target size={16} />}
+        <RingGauge
+          value={answered}
           label="Answered well"
-          to={answered}
-          suffix="%"
+          icon={<Target size={12} />}
           tone={answered >= 70 ? "good" : answered >= 40 ? "warn" : "bad"}
           delay={0.16}
         />
       </div>
 
+      {/* Knowledge gaps — the differentiator, surfaced first */}
+      <BlurIn delay={0.24} className="insights-section">
+        <h3 className="insights-section-title gaps-title">
+          <AlertTriangle size={14} /> Knowledge gaps
+          {gapCount > 0 && <span className="gaps-badge">{gapCount}</span>}
+          <span className="insights-section-hint">Upload docs to cover these</span>
+        </h3>
+        {gapCount === 0 ? (
+          <div className="gaps-clear">
+            <CheckCircle2 size={18} />
+            <span>No gaps — your documents cover what's being asked. 🎉</span>
+          </div>
+        ) : (
+          <div className="gap-list">
+            {data.gaps.map((g, i) => {
+              const best = Math.round(g.best_score * 100);
+              return (
+                <SpotlightCard key={g.question} className="gap-card">
+                  <motion.div
+                    className="gap-inner"
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.28 + i * 0.06 }}
+                  >
+                    <div className="gap-main">
+                      <span className="gap-question">{g.question}</span>
+                      <div className="gap-progress">
+                        <span className="gap-progress-track">
+                          <span className="gap-progress-fill" style={{ width: `${best}%` }} />
+                        </span>
+                        <span className="gap-progress-num">best {best}%</span>
+                      </div>
+                    </div>
+                    <div className="gap-meta">
+                      <span className="gap-count">asked {g.count}×</span>
+                      <motion.button
+                        type="button"
+                        className="btn-ask-this"
+                        onClick={() => onQuickAsk(g.question)}
+                        whileHover={{ scale: 1.04 }}
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        <Zap size={10} /> Try in chat
+                      </motion.button>
+                    </div>
+                  </motion.div>
+                </SpotlightCard>
+              );
+            })}
+          </div>
+        )}
+      </BlurIn>
+
       {/* Top questions bar chart */}
       {chartData.length > 0 && (
-        <BlurIn delay={0.24} className="insights-section">
+        <BlurIn delay={0.32} className="insights-section">
           <h3 className="insights-section-title">
             <MessageSquare size={14} /> Top questions
             <span className="insights-section-hint">Click bar to ask in chat</span>
@@ -239,7 +307,7 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
 
       {/* FAQs */}
       {data.faqs.length > 0 && (
-        <BlurIn delay={0.32} className="insights-section">
+        <BlurIn delay={0.4} className="insights-section">
           <h3 className="insights-section-title">
             <BookOpen size={14} /> Team FAQ
             <span className="insights-section-hint">Tap to expand answer</span>
@@ -250,7 +318,7 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
                 key={item.question}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.35 + i * 0.05 }}
+                transition={{ delay: 0.42 + i * 0.05 }}
               >
                 <FaqItem item={item} onAsk={onQuickAsk} />
               </motion.div>
@@ -259,46 +327,9 @@ export function InsightsPanel({ fetchInsights, onQuickAsk }: Props) {
         </BlurIn>
       )}
 
-      {/* Knowledge gaps */}
-      <BlurIn delay={0.4} className="insights-section">
-        <h3 className="insights-section-title">
-          <AlertTriangle size={14} /> Knowledge gaps
-          <span className="insights-section-hint">Upload docs to cover these</span>
-        </h3>
-        {data.gaps.length === 0 ? (
-          <p className="insights-empty">No gaps — your documents cover what's being asked. 🎉</p>
-        ) : (
-          <div className="gap-list">
-            {data.gaps.map((g, i) => (
-              <SpotlightCard key={g.question} className="gap-card">
-                <motion.div
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.42 + i * 0.06 }}
-                >
-                  <div className="gap-main">
-                    <span className="gap-question">{g.question}</span>
-                    <span className="gap-hint">Add content to cover this gap.</span>
-                  </div>
-                  <div className="gap-meta">
-                    <span className="gap-count">asked {g.count}×</span>
-                    <span className="gap-score bad">best {Math.round(g.best_score * 100)}%</span>
-                    <motion.button
-                      type="button"
-                      className="btn-ask-this"
-                      onClick={() => onQuickAsk(g.question)}
-                      whileHover={{ scale: 1.04 }}
-                      whileTap={{ scale: 0.95 }}
-                    >
-                      <Zap size={10} /> Try in chat
-                    </motion.button>
-                  </div>
-                </motion.div>
-              </SpotlightCard>
-            ))}
-          </div>
-        )}
-      </BlurIn>
+      <div className="insights-foot">
+        <Sparkles size={12} /> Gaps and FAQs update automatically as your team asks questions.
+      </div>
     </div>
   );
 }

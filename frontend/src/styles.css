@@ -2533,3 +2533,227 @@ html {
   font-weight: 500;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   INSIGHTS REDESIGN — hero gauges, gap emphasis, footer
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Hero row: headline count + ring gauges ───────────────────────────────── */
+.insights-hero {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: var(--sp-md);
+}
+
+.hero-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--sp-md) var(--sp-lg);
+  border-radius: var(--r-lg);
+  background:
+    radial-gradient(120% 120% at 0% 0%, rgba(0,102,204,0.10), transparent 60%),
+    var(--canvas);
+  border: 1px solid rgba(0,102,204,0.18);
+  box-shadow: var(--shadow-sm);
+}
+
+.hero-count-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  border-radius: var(--r-md);
+  background: var(--grad-primary);
+  color: #fff;
+  box-shadow: var(--shadow-primary);
+  margin-bottom: 6px;
+}
+
+.hero-count-value {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -1px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-count-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-48);
+}
+
+.hero-count-foot { font-size: 11px; color: var(--ink-24); margin-top: 2px; }
+
+/* ─── Ring gauge ───────────────────────────────────────────────────────────── */
+.gauge-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--sp-md);
+  border-radius: var(--r-lg);
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+.gauge-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.gauge-card.good { border-color: rgba(48,209,88,0.28); }
+.gauge-card.warn { border-color: rgba(255,159,10,0.28); }
+.gauge-card.bad  { border-color: rgba(255,69,58,0.28); }
+
+.gauge { position: relative; width: 80px; height: 80px; }
+.gauge-svg { width: 80px; height: 80px; display: block; }
+
+.gauge-track { fill: none; stroke: var(--hairline); stroke-width: 7; }
+.gauge-fill  { fill: none; stroke: var(--primary); stroke-width: 7; }
+.gauge-card.good .gauge-fill { stroke: var(--green); }
+.gauge-card.warn .gauge-fill { stroke: var(--orange); }
+.gauge-card.bad  .gauge-fill { stroke: var(--red); }
+
+.gauge-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.gauge-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-48);
+}
+.gauge-card.good .gauge-label svg { color: var(--green); }
+.gauge-card.warn .gauge-label svg { color: var(--orange); }
+.gauge-card.bad  .gauge-label svg { color: var(--red); }
+
+/* ─── Knowledge gaps emphasis ──────────────────────────────────────────────── */
+.gaps-title { font-size: 14px; }
+.gaps-title svg { color: var(--red); }
+
+.gaps-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.gaps-clear {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px var(--sp-md);
+  border-radius: var(--r-md);
+  background: rgba(48,209,88,0.07);
+  border: 1px solid rgba(48,209,88,0.22);
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.gap-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-md);
+}
+
+.gap-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.gap-progress-track {
+  width: 120px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: rgba(255,69,58,0.15);
+  overflow: hidden;
+}
+
+.gap-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--red);
+  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+}
+
+.gap-progress-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Insights footer note ─────────────────────────────────────────────────── */
+.insights-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: var(--sp-xs);
+  font-size: 11px;
+  color: var(--ink-48);
+}
+.insights-foot svg { color: var(--primary); }
+
+@media (max-width: 833px) {
+  .insights-hero { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL POLISH — unified card lift, focus rings, reduced-motion
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.stat-pill { transition: transform 0.18s, box-shadow 0.18s, border-color 0.15s; }
+.stat-pill:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+/* Visible keyboard focus across interactive primitives */
+.nav-tab:focus-visible,
+.btn-ghost:focus-visible,
+.btn-ask-this:focus-visible,
+.faq-header:focus-visible,
+.suggestion-chip:focus-visible {
+  outline: 2px solid var(--primary-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
