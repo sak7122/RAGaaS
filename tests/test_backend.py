@@ -257,6 +257,98 @@ def test_execute_is_idempotent() -> None:
     assert "idempotent" in second.json()["detail"]["reason"]
 
 
+def test_send_email_tool_registered_and_outward() -> None:
+    from backend.tools import create_tool_registry
+    spec = {s.name: s for s in create_tool_registry().specs()}
+    assert "send_email" in spec
+    assert spec["send_email"].outward is True
+    assert "admin" in spec["send_email"].approver_roles
+
+
+def test_send_email_dry_run_does_not_send() -> None:
+    # Approved admin in dev → executes in dry-run, no SMTP touched.
+    res = client.post("/api/actions/execute",
+                      json={"tool": "send_email",
+                            "args": {"to": "x@acme.com", "subject": "hi", "body": "yo"},
+                            "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "executed"
+    assert body["detail"]["dry_run"] is True
+    assert body["detail"]["would_send"]["to"] == "x@acme.com"
+
+
+def test_send_email_requires_approval() -> None:
+    res = client.post("/api/actions/execute",
+                      json={"tool": "send_email",
+                            "args": {"to": "x@acme.com", "subject": "hi", "body": "yo"},
+                            "approved": False},
+                      headers=HEADERS_A)
+    assert res.status_code == 403
+    assert "approval" in res.json()["detail"]["reason"]
+
+
+def test_generate_document_is_not_outward() -> None:
+    from backend.tools import create_tool_registry
+    spec = {s.name: s for s in create_tool_registry().specs()}
+    assert "generate_document" in spec
+    assert spec["generate_document"].outward is False  # produces text, no external effect
+
+
+def test_generate_document_produces_grounded_doc() -> None:
+    # tenant-a has secret_a.pdf ("blue parking permits"). The app registry is wired
+    # with ToolServices (generator + retrieval), so this returns real document text.
+    res = client.post("/api/actions/execute",
+                      json={"tool": "generate_document",
+                            "args": {"doc_type": "summary", "title": "Parking policy",
+                                     "instructions": "Summarize parking rules."},
+                            "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "executed"
+    assert body["detail"]["document"]                      # non-empty draft
+    assert "secret_a.pdf" in body["detail"]["sources"]     # grounded in tenant-a's doc
+
+
+def test_generate_document_no_source_fails() -> None:
+    # A topic no tenant-a doc covers → no grounding → failed (never fabricates).
+    res = client.post("/api/actions/execute",
+                      json={"tool": "generate_document",
+                            "args": {"title": "Quarterly revenue in Mongolia"},
+                            "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 502
+    assert res.json()["status"] == "failed"
+
+
+def test_publish_workflow_returns_share_url() -> None:
+    res = client.post("/api/actions/execute",
+                      json={"tool": "publish_workflow",
+                            "args": {"title": "Onboarding plan",
+                                     "markdown": "# Onboarding plan\n\n1. Provision access."},
+                            "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "executed"
+    assert "/share/" in body["detail"]["url"]
+
+
+def test_publish_workflow_link_is_fetchable() -> None:
+    # The published link resolves via the existing share endpoint.
+    pub = client.post("/api/actions/execute",
+                      json={"tool": "publish_workflow",
+                            "args": {"title": "Audit plan", "markdown": "# Audit plan\n\nstep 1"},
+                            "approved": True},
+                      headers=HEADERS_A).json()
+    share_id = pub["detail"]["url"].rsplit("/share/", 1)[1]
+    got = client.get(f"/api/share/{share_id}")
+    assert got.status_code == 200
+    assert "Audit plan" in got.json()["answer"]
+
+
 def test_action_audit_records_attempts() -> None:
     client.post("/api/actions/execute",
                 json={"tool": "create_jira_ticket",

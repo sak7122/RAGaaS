@@ -174,6 +174,7 @@ jobs:
             --port 8000 \
             --set-env-vars "\
           RAGAAS_ENV=production,\
+          RAGAAS_TOOLS_LIVE=1,\
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},\
           FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},\
           GCS_BUCKET=${{ secrets.GCS_BUCKET }},\

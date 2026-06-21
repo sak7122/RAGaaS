@@ -43,6 +43,7 @@ from backend.slack_store import create_slack_store
 from backend.planner import create_planner
 from backend.workflow import SolveRequest, WorkflowSolution, ToolCall
 from backend.tools import (
+    ToolServices,
     create_tool_registry,
     create_audit_store,
     create_tool_executor,
@@ -131,7 +132,13 @@ share_store          = create_share_store(config.env)
 widget_key_store     = create_widget_key_store(config.env)
 slack_store          = create_slack_store(config.env)
 planner              = create_planner()
-tool_registry        = create_tool_registry()
+# generate_document needs the LLM + retrieval; lambdas resolve module globals at
+# call time (retrieve_chunks is defined further down — fine, only invoked later).
+tool_registry        = create_tool_registry(ToolServices(
+    generate=lambda instruction, chunks: generator.generate(instruction, chunks, []),
+    retrieve=lambda tid, query, k: retrieve_chunks(tid, query, k),
+    publish=lambda payload: f"{config.app_base_url}/share/{share_store.create(payload)}",
+))
 audit_store          = create_audit_store(config.env)
 tool_executor        = create_tool_executor(config.env, tool_registry, audit_store)
 log.info("startup env=%s emulator=%s embedder=%s generator=%s planner=%s tools=%d",

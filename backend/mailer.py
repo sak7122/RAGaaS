@@ -75,6 +75,42 @@ def _build_invite(to_email: str, invite_link: str, tenant_name: str,
     return msg
 
 
+def _smtp_send(msg: EmailMessage) -> bool:
+    """Shared STARTTLS send. Returns False on any failure (never raises, never
+    logs credentials)."""
+    host = os.getenv("SMTP_HOST") or "smtp.gmail.com"
+    port = int(os.getenv("SMTP_PORT") or "587")
+    user = os.getenv("SMTP_USER", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return True
+    except Exception as exc:
+        log.warning("smtp send failed to=%s: %s", msg.get("To"), exc)
+        return False
+
+
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Generic transactional send used by the action layer's SendEmailTool.
+    Returns False if SMTP is unconfigured or the send fails."""
+    if not smtp_configured():
+        log.info("SMTP not configured — send_email skipped to=%s", to_email)
+        return False
+    user = os.getenv("SMTP_USER", "")
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = os.getenv("SMTP_FROM") or formataddr(("RAGaaS", user))
+    msg["To"] = to_email
+    msg.set_content(body)
+    ok = _smtp_send(msg)
+    if ok:
+        log.info("email sent to=%s subject=%r", to_email, subject)
+    return ok
+
+
 def send_invite_email(to_email: str, invite_link: str, tenant_name: str,
                       inviter: str, role: str) -> bool:
     """Send the invite. Returns True if sent, False if SMTP unconfigured

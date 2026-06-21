@@ -63,6 +63,52 @@ function cannedAnswer(question: string) {
   };
 }
 
+function cannedWorkflow(problem: string) {
+  queriesUsed += 1;
+  const summary = problem.slice(0, 80);
+  return {
+    problem,
+    steps: [
+      {
+        n: 1,
+        action: "Provision accounts and access for the new hire (email, SSO, repository).",
+        rationale: "Standard first-day setup from the onboarding guide.",
+        owner_hint: "IT", blocking: true,
+        sources: [{ file_name: "Employee_Handbook.pdf", page: 12, chunk_index: 4, score: 0.88,
+          excerpt: "New hires receive email, SSO, and repository access on day one via the IT request form." }],
+        suggested_tool_call: { tool: "generate_document",
+          args: { doc_type: "onboarding plan", title: summary,
+            instructions: "Draft a first-week onboarding plan from the handbook." },
+          requires_approval: true, status: "proposed" },
+      },
+      {
+        n: 2,
+        action: "Schedule security awareness training and a team introduction.",
+        rationale: "Training must be completed within the first five business days.",
+        owner_hint: "People Ops", blocking: false,
+        sources: [{ file_name: "Employee_Handbook.pdf", page: 14, chunk_index: 1, score: 0.79,
+          excerpt: "Security awareness training must be completed within the first five business days." }],
+        suggested_tool_call: { tool: "send_email", args: { to: "newhire@acme.com",
+          subject: "Welcome — your first-week schedule", body: "Here is your onboarding plan…" },
+          requires_approval: true, status: "proposed" },
+      },
+      {
+        n: 3,
+        action: "Assign a 30-day ramp plan and pair the hire with a buddy.",
+        rationale: "Improves ramp speed and retention per the handbook.",
+        owner_hint: "Manager", blocking: false,
+        sources: [{ file_name: "Employee_Handbook.pdf", page: 15, chunk_index: 2, score: 0.71,
+          excerpt: "Each new hire is paired with a buddy and given a 30-day ramp plan." }],
+      },
+    ],
+    open_questions: ["Which equipment tier applies to this role? Not specified in the documents."],
+    confidence: 0.82,
+    tenant_id: "acme-corp",
+    queries_used: queriesUsed,
+    query_limit: 1000,
+  };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -92,6 +138,31 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
     const q = init?.body ? (JSON.parse(init.body as string).message as string) : "";
     return json(cannedAnswer(q));
   }
+
+  if (path.endsWith("/api/solve") && method === "POST") {
+    const p = init?.body ? (JSON.parse(init.body as string).problem as string) : "";
+    return json(cannedWorkflow(p));
+  }
+
+  if (path.endsWith("/api/actions/execute") && method === "POST") {
+    const b = init?.body ? JSON.parse(init.body as string) : {};
+    if (b.tool === "generate_document") {
+      const title = String(b.args?.title ?? "Onboarding Plan");
+      return json({ ok: true, tool: b.tool, status: "executed", detail: {
+        title, sources: ["Employee_Handbook.pdf"],
+        document:
+          `# ${title}\n\n## Day 1 — Access & setup\n- Provision email, SSO, and repository access via the IT request form (Employee_Handbook.pdf p.12).\n- Hand over laptop and confirm MFA enrolment.\n\n## Week 1 — Training\n- Complete security awareness training within five business days (p.14).\n- Team introductions and product overview session.\n\n## First 30 days — Ramp\n- Pair with an assigned buddy and follow the 30-day ramp plan (p.15).\n- Weekly check-ins with the manager.\n\n_Grounded in Employee_Handbook.pdf. Demo output._`,
+      } });
+    }
+    if (b.tool === "publish_workflow") {
+      return json({ ok: true, tool: b.tool, status: "executed",
+        detail: { url: "https://demo.ragaas.app/share/demo-workflow-xyz", title: b.args?.title } });
+    }
+    // Other tools: demo dry-runs — no real side effect.
+    return json({ ok: true, tool: b.tool, status: "executed",
+      detail: { dry_run: true, would_send: b.args } });
+  }
+  if (path.endsWith("/api/actions/audit") && method === "GET") return json([]);
 
   if (path.endsWith("/api/share") && method === "POST") {
     return json({ share_id: "demo-abc123", url: "https://demo.ragaas.app/share/demo-abc123" }, 201);

@@ -135,6 +135,23 @@ export function SolvePage() {
   const [solving, setSolving] = useState(false);
   const [stage, setStage] = useState(0);
   const heroRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow the textarea with its content (capped, then scrolls).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 180) + "px";
+  }, [problem]);
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter solves; Shift+Enter inserts a newline (default behaviour).
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!solving && token && problem.trim()) run(problem);
+    }
+  }
 
   function spotlight(e: React.MouseEvent<HTMLDivElement>) {
     const el = heroRef.current;
@@ -201,11 +218,14 @@ export function SolvePage() {
           <p className="sp-sub">Not just an answer — an ordered, cited workflow with actions you can run.</p>
 
           <form className="sp-form" onSubmit={submit}>
-            <input
+            <textarea
+              ref={inputRef}
               className="sp-input"
               value={problem}
               onChange={(e) => setProblem(e.target.value)}
-              placeholder="e.g. Onboard a new backend engineer…"
+              onKeyDown={onKeyDown}
+              placeholder="Describe your problem in detail…  (Enter to solve · Shift+Enter for a new line)"
+              rows={1}
               disabled={solving || needsAuth}
             />
             <motion.button type="submit" className="sp-go"

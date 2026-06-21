@@ -9,7 +9,8 @@ import {
 import {
   FileText, UserRound, Lock,
   CircleHelp, Check, X, Loader2, Zap, ShieldCheck,
-  Rocket, Upload, ListChecks, ArrowUpRight,
+  Rocket, Upload, ListChecks, ArrowUpRight, Download, Copy,
+  Share2, Link2,
 } from "lucide-react";
 
 // ── Types (mirror backend/workflow.py) ────────────────────────────────────────
@@ -98,6 +99,9 @@ function ActionCard({ call, onExecute, disabled }: {
 }) {
   const [state, setState] = useState<"idle" | "running" | "done" | "blocked" | "error">("idle");
   const [msg, setMsg] = useState("");
+  const [doc, setDoc] = useState<{ text: string; title: string; sources: string[] } | null>(null);
+
+  const isDocTool = call.tool === "generate_document";
 
   async function approve() {
     if (state === "running" || state === "done") return;
@@ -106,12 +110,30 @@ function ActionCard({ call, onExecute, disabled }: {
     if (!res) { setState("error"); setMsg("Network error"); return; }
     if (res.status === "executed") {
       setState("done");
-      setMsg(res.detail?.dry_run ? "Dry-run — no external call made" : "Executed");
+      const d = res.detail || {};
+      if (typeof d.document === "string") {
+        setDoc({ text: d.document, title: String(d.title ?? "document"),
+          sources: Array.isArray(d.sources) ? (d.sources as string[]) : [] });
+        setMsg("Document ready");
+      } else {
+        setMsg(d.dry_run ? "Dry-run — no external call made" : "Executed");
+      }
     } else if (res.status === "rejected") {
       setState("blocked"); setMsg(String(res.detail?.reason ?? "Rejected"));
     } else {
       setState("error"); setMsg(String(res.detail?.error ?? "Failed"));
     }
+  }
+
+  function download() {
+    if (!doc) return;
+    const blob = new Blob([doc.text], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${doc.title.replace(/[^\w-]+/g, "_").slice(0, 60) || "document"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -122,9 +144,9 @@ function ActionCard({ call, onExecute, disabled }: {
       transition={{ delay: 0.15 }}
     >
       <div className="wf-action-head">
-        <Zap size={12} />
+        {isDocTool ? <FileText size={12} /> : <Zap size={12} />}
         <code className="wf-action-tool">{call.tool}</code>
-        <span className="wf-action-gate"><Lock size={10} /> needs approval</span>
+        {!isDocTool && <span className="wf-action-gate"><Lock size={10} /> needs approval</span>}
       </div>
       <div className="wf-action-args">
         {Object.entries(call.args).map(([k, v]) => (
@@ -140,14 +162,15 @@ function ActionCard({ call, onExecute, disabled }: {
               whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.94 }}
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             >
-              <ShieldCheck size={13} /> Approve &amp; run
+              {isDocTool ? <><FileText size={13} /> Generate document</>
+                : <><ShieldCheck size={13} /> Approve &amp; run</>}
             </motion.button>
           ) : (
             <motion.span
               key="status" className="wf-action-status"
               initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
             >
-              {state === "running" && <><Loader2 size={13} className="wf-spin" /> Running…</>}
+              {state === "running" && <><Loader2 size={13} className="wf-spin" /> {isDocTool ? "Drafting…" : "Running…"}</>}
               {state === "done" && <><Check size={13} color="var(--green)" /> {msg}</>}
               {state === "blocked" && <><X size={13} color="var(--orange)" /> {msg}</>}
               {state === "error" && <><X size={13} color="var(--red)" /> {msg}</>}
@@ -155,6 +178,26 @@ function ActionCard({ call, onExecute, disabled }: {
           )}
         </AnimatePresence>
       </div>
+
+      {doc && (
+        <motion.div className="wf-doc"
+          initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
+          <div className="wf-doc-bar">
+            <span className="wf-doc-title"><FileText size={12} /> {doc.title}</span>
+            <button type="button" className="wf-doc-btn" onClick={download} title="Download .md">
+              <Download size={13} /> .md
+            </button>
+            <button type="button" className="wf-doc-btn"
+              onClick={() => navigator.clipboard.writeText(doc.text)} title="Copy">
+              <Copy size={13} /> Copy
+            </button>
+          </div>
+          <pre className="wf-doc-body">{doc.text}</pre>
+          {doc.sources.length > 0 && (
+            <div className="wf-doc-sources">Grounded in: {doc.sources.join(" · ")}</div>
+          )}
+        </motion.div>
+      )}
     </motion.div>
   );
 }
@@ -252,8 +295,68 @@ export function WorkflowResult({ solution, onExecute, disabled }: {
         </motion.div>
       )}
 
+      <PublishBar solution={solution} onExecute={onExecute} disabled={disabled} />
       <WhatsNext solution={solution} />
     </motion.div>
+  );
+}
+
+// ── Publish — solved workflow → shareable link (reuses share_store) ───────────
+function solutionToMarkdown(s: WorkflowSolution): string {
+  const out = [`# ${s.problem}`, ""];
+  s.steps.forEach((st) => {
+    out.push(`## ${st.n}. ${st.action}`);
+    if (st.rationale) out.push(st.rationale);
+    if (st.owner_hint) out.push(`**Owner:** ${st.owner_hint}`);
+    if (st.sources.length)
+      out.push(`_Sources: ${st.sources.map((x) => `${x.file_name} p.${x.page}`).join(", ")}_`);
+    out.push("");
+  });
+  if (s.open_questions.length) {
+    out.push("## Open questions");
+    s.open_questions.forEach((q) => out.push(`- ${q}`));
+  }
+  return out.join("\n");
+}
+
+function PublishBar({ solution, onExecute, disabled }: {
+  solution: WorkflowSolution; onExecute: OnExecute; disabled: boolean;
+}) {
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [url, setUrl] = useState("");
+
+  async function publish() {
+    if (state === "loading") return;
+    setState("loading");
+    const res = await onExecute("publish_workflow", {
+      title: solution.problem, markdown: solutionToMarkdown(solution),
+    });
+    if (res?.status === "executed" && typeof res.detail?.url === "string") {
+      setUrl(res.detail.url as string);
+      navigator.clipboard.writeText(res.detail.url as string).catch(() => {});
+      setState("done");
+    } else {
+      setState("error");
+    }
+  }
+
+  return (
+    <div className="wf-publish">
+      {state === "done" ? (
+        <div className="wf-publish-done">
+          <Link2 size={13} />
+          <a href={url} target="_blank" rel="noreferrer">{url}</a>
+          <span className="wf-publish-copied"><Check size={12} /> copied</span>
+        </div>
+      ) : (
+        <motion.button type="button" className="wf-publish-btn"
+          onClick={publish} disabled={disabled || state === "loading"}
+          whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.96 }}>
+          {state === "loading" ? <Loader2 size={14} className="wf-spin" /> : <Share2 size={14} />}
+          {state === "loading" ? "Publishing…" : state === "error" ? "Retry publish" : "Publish workflow"}
+        </motion.button>
+      )}
+    </div>
   );
 }
 

@@ -89,10 +89,11 @@ def _answer_fallback(problem: str, grounded: str, chunks: list[dict],
         rationale="Grounded answer synthesized from your documents.",
         sources=[_src(c) for c in chunks[:3]],
     )
-    if propose_actions and registry.get("create_jira_ticket"):
+    if propose_actions and registry.get("generate_document"):
         step.suggested_tool_call = ToolCall(
-            tool="create_jira_ticket",
-            args={"project": "OPS", "summary": _snippet(problem, 120)},
+            tool="generate_document",
+            args={"doc_type": "summary", "title": _snippet(problem, 120),
+                  "instructions": "Summarize the grounded answer into an actionable document."},
         )
     confidence = round(min(0.9, (chunks[0]["score"] if chunks else 0.0) + 0.25), 2)
     return WorkflowSolution(problem=problem, steps=[step], open_questions=[],
@@ -137,10 +138,11 @@ class MockPlanner:
                 sources=[_src(c)],
             ))
 
-        if req.propose_actions and registry.get("create_jira_ticket"):
+        if req.propose_actions and registry.get("generate_document"):
             steps[0].suggested_tool_call = ToolCall(
-                tool="create_jira_ticket",
-                args={"project": "OPS", "summary": _snippet(req.problem, 120)},
+                tool="generate_document",
+                args={"doc_type": "summary", "title": _snippet(req.problem, 120),
+                      "instructions": "Summarize the grounded answer into an actionable document."},
             )
 
         confidence = round(min(0.95, chunks[0]["score"] + 0.2), 2)

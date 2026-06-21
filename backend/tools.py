@@ -52,6 +52,15 @@ class ToolHandler(Protocol):
     def run(self, tenant_id: str, args: dict, *, dry_run: bool) -> dict: ...
 
 
+@dataclass
+class ToolServices:
+    """Request/runtime deps some tools need (LLM + retrieval + publish). Injected
+    by main.py so the registry stays decoupled from FastAPI globals."""
+    generate: Callable[[str, list[dict]], str]        # (instruction, chunks) -> text
+    retrieve: Callable[[str, str, int], list[dict]]   # (tenant_id, query, k) -> chunks
+    publish: Callable[[dict], str] | None = None      # (share payload) -> public URL
+
+
 # ── Registry (allowlist) ──────────────────────────────────────────────────────
 class ToolRegistry:
     def __init__(self) -> None:
@@ -194,11 +203,130 @@ class CreateJiraTicketTool:
         raise NotImplementedError("wire per-tenant Jira creds + REST call (Phase 3)")
 
 
+class SendEmailTool:
+    """REAL outward tool — reuses the existing SMTP mailer (no new creds). Sends
+    only when live (RAGAAS_TOOLS_LIVE=1 in prod) AND SMTP is configured; otherwise
+    dry-run logs intent. Outward + irreversible → admin/uploader approval required."""
+    spec = ToolSpec(
+        name="send_email",
+        description="Send a plain-text email. Use to notify a person about a step or decision.",
+        args_schema={
+            "type": "object",
+            "required": ["to", "subject", "body"],
+            "properties": {
+                "to": {"type": "string", "format": "email"},
+                "subject": {"type": "string", "maxLength": 200},
+                "body": {"type": "string"},
+            },
+        },
+        outward=True,
+        approver_roles=("admin", "uploader"),
+    )
+
+    def run(self, tenant_id: str, args: dict, *, dry_run: bool) -> dict:
+        to = str(args.get("to") or args.get("to_email") or "")
+        subject = str(args.get("subject", ""))
+        body = str(args.get("body", ""))
+        if not to:
+            raise ValueError("send_email requires a 'to' recipient")
+        if dry_run:
+            log.info("DRY-RUN send_email tenant=%s to=%s subject=%r", tenant_id, to, subject)
+            return {"dry_run": True, "would_send": {"to": to, "subject": subject}}
+        from backend.mailer import send_email, smtp_configured
+        if not smtp_configured():
+            raise RuntimeError("SMTP not configured (set SMTP_USER / SMTP_PASSWORD)")
+        if not send_email(to, subject, body):
+            raise RuntimeError("email send failed")
+        return {"sent": True, "to": to}
+
+
+class GenerateDocumentTool:
+    """Writes the actual deliverable (runbook, policy, summary, brief) grounded
+    in the tenant's documents — the agent producing work, not just describing it.
+    Not outward (no external side effect): produces text, returned to the caller.
+    Needs ToolServices (LLM + retrieval); inert if unavailable."""
+    spec = ToolSpec(
+        name="generate_document",
+        description="Draft a document (runbook, policy, summary, brief) grounded in the "
+                    "knowledge base. Use when the problem asks to write/produce a deliverable.",
+        args_schema={
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "doc_type": {"type": "string", "description": "e.g. runbook, policy, summary, brief"},
+                "title": {"type": "string", "maxLength": 200},
+                "instructions": {"type": "string", "description": "What the document should cover"},
+            },
+        },
+        outward=False,
+    )
+
+    def __init__(self, services: ToolServices | None) -> None:
+        self._svc = services
+
+    def run(self, tenant_id: str, args: dict, *, dry_run: bool) -> dict:
+        if self._svc is None:
+            raise RuntimeError("document generation service unavailable")
+        doc_type = str(args.get("doc_type") or "document")
+        title = str(args.get("title") or doc_type)
+        instructions = str(args.get("instructions") or args.get("topic") or title)
+        chunks = self._svc.retrieve(tenant_id, f"{title} {instructions}", 8)
+        if not chunks:
+            raise RuntimeError("no source documents matched — cannot ground the draft")
+        prompt = (
+            f'Write a {doc_type} titled "{title}". {instructions}. '
+            f"Use clear section headings and concise, actionable content. Base it "
+            f"strictly on the provided document excerpts and cite sources inline."
+        )
+        text = self._svc.generate(prompt, chunks)
+        return {
+            "document": text, "doc_type": doc_type, "title": title,
+            "sources": sorted({c["file_name"] for c in chunks}),
+        }
+
+
+class PublishWorkflowTool:
+    """Turns a solved workflow into a public, shareable link (reuses share_store).
+    Workflow-level action — the caller passes the rendered markdown. Not outward
+    in the irreversible sense; parity with the existing /api/share Share button."""
+    spec = ToolSpec(
+        name="publish_workflow",
+        description="Publish the current workflow to a shareable link a teammate can open.",
+        args_schema={
+            "type": "object",
+            "required": ["title", "markdown"],
+            "properties": {
+                "title": {"type": "string", "maxLength": 200},
+                "markdown": {"type": "string"},
+            },
+        },
+        outward=False,
+    )
+
+    def __init__(self, services: ToolServices | None) -> None:
+        self._svc = services
+
+    def run(self, tenant_id: str, args: dict, *, dry_run: bool) -> dict:
+        if self._svc is None or self._svc.publish is None:
+            raise RuntimeError("publish service unavailable")
+        title = str(args.get("title") or "Workflow")
+        markdown = str(args.get("markdown") or "")
+        if not markdown.strip():
+            raise RuntimeError("nothing to publish")
+        url = self._svc.publish({
+            "question": title, "answer": markdown, "citations": [], "tenant_id": tenant_id,
+        })
+        return {"url": url, "title": title}
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
-def create_tool_registry() -> ToolRegistry:
+def create_tool_registry(services: ToolServices | None = None) -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register(CreateJiraTicketTool())
-    # reg.register(SendEmailTool()); reg.register(CreateDocTool()); ...
+    reg.register(CreateJiraTicketTool())       # stub — kept for future integration
+    reg.register(SendEmailTool())
+    reg.register(GenerateDocumentTool(services))
+    reg.register(PublishWorkflowTool(services))
+    # reg.register(SlackPostTool()); ...
     return reg
 
 
