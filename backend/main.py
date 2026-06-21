@@ -40,6 +40,13 @@ from backend.mailer import send_invite_email, smtp_configured
 from backend.share_store import create_share_store
 from backend.widget_store import create_widget_key_store
 from backend.slack_store import create_slack_store
+from backend.planner import create_planner
+from backend.workflow import SolveRequest, WorkflowSolution, ToolCall
+from backend.tools import (
+    create_tool_registry,
+    create_audit_store,
+    create_tool_executor,
+)
 
 # ── Structured logging ────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -123,8 +130,13 @@ tenant_profile_store = create_tenant_profile_store(config.env)
 share_store          = create_share_store(config.env)
 widget_key_store     = create_widget_key_store(config.env)
 slack_store          = create_slack_store(config.env)
-log.info("startup env=%s emulator=%s embedder=%s generator=%s",
-         config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__)
+planner              = create_planner()
+tool_registry        = create_tool_registry()
+audit_store          = create_audit_store(config.env)
+tool_executor        = create_tool_executor(config.env, tool_registry, audit_store)
+log.info("startup env=%s emulator=%s embedder=%s generator=%s planner=%s tools=%d",
+         config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__,
+         type(planner).__name__, len(tool_registry.specs()))
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -240,6 +252,15 @@ class WidgetKeyCreateRequest(BaseModel):
 class SlackConnectRequest(BaseModel):
     team_id: str = Field(min_length=1, max_length=32)
     team_name: str = Field(min_length=1, max_length=128)
+
+
+class ExecuteActionRequest(BaseModel):
+    tool: str = Field(min_length=1, max_length=64)
+    args: dict = Field(default_factory=dict)
+    # An authenticated admin/uploader calling this with approved=True IS the
+    # human approval. The executor re-checks the caller's role server-side.
+    approved: bool = False
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 # ── Auth & role guards ────────────────────────────────────────────────────────
@@ -385,6 +406,60 @@ def tokenize(text: str) -> set[str]:
 
 def enforce_quota(tenant_id: str) -> int:
     return usage_store.increment_or_reject(tenant_id)
+
+
+def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
+                    history: list[dict] | None = None) -> list[dict]:
+    """Tenant-scoped hybrid retrieval (vector + keyword), shared by the planner.
+    Returns ranked chunks: [{file_name, page, chunk_index, text, score}, ...].
+    Same scoring as /api/chat; isolation is enforced at index_store level."""
+    history = history or []
+    search_query = query
+    if hasattr(generator, "rewrite_query"):
+        try:
+            search_query = generator.rewrite_query(query, history)
+        except Exception as exc:
+            log.warning("query rewrite failed (%s); using original", exc)
+
+    query_terms = tokenize(search_query)
+    denom = max(len(query_terms), 1)
+
+    candidates: list[dict] = []
+    try:
+        q_vec = embedder.embed_query(search_query)
+        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
+    except Exception as exc:
+        log.warning("vector search failed (%s); keyword fallback", exc)
+
+    if not candidates:
+        for doc in index_store.list_docs(tenant_id):
+            chunks = doc.get("chunks") or [
+                {"page": i + 1, "chunk_index": 0, "text": p}
+                for i, p in enumerate(doc.get("pages", []))
+            ]
+            for ch in chunks:
+                candidates.append({
+                    "file_name": doc["file_name"], "page": ch.get("page", 1),
+                    "chunk_index": ch.get("chunk_index", 0),
+                    "text": ch.get("text", ""), "vec_score": 0.0,
+                })
+
+    ranked: list[tuple[float, dict]] = []
+    for c in candidates:
+        kw = len(query_terms & tokenize(c["text"])) / denom
+        vec = float(c.get("vec_score", 0.0))
+        score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
+        if score >= 0.05:
+            ranked.append((round(score, 4), c))
+    ranked.sort(key=lambda t: t[0], reverse=True)
+
+    return [
+        {
+            "file_name": c["file_name"], "page": c.get("page", 1),
+            "chunk_index": c.get("chunk_index", 0), "text": c["text"], "score": s,
+        }
+        for s, c in ranked[:k]
+    ]
 
 
 # ── Routes: health ────────────────────────────────────────────────────────────
@@ -594,6 +669,60 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         queries_used=queries_used,
         query_limit=QUERY_LIMIT,
     )
+
+
+# ── Routes: solve (agentic workflow) ──────────────────────────────────────────
+@app.post("/api/solve", response_model=WorkflowSolution)
+def solve(req: SolveRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> WorkflowSolution:
+    tenant_id = principal.tenant_id
+    queries_used = enforce_quota(tenant_id)  # shares the per-tenant breaker with /api/chat
+    history = req.history
+
+    def _retrieve(tid: str, query: str, k: int) -> list[dict]:
+        # tid is always tenant_id (planner is tenant-bound); pass history for rewrite.
+        return retrieve_chunks(tid, query, k, history)
+
+    solution = planner.solve(tenant_id, req, _retrieve, tool_registry)
+    # Server owns identity + quota fields — never trust the planner for these.
+    solution.tenant_id = tenant_id
+    solution.queries_used = queries_used
+    solution.query_limit = QUERY_LIMIT
+    log.info("solve tenant=%s steps=%d open_q=%d confidence=%.2f queries_used=%d",
+             tenant_id, len(solution.steps), len(solution.open_questions),
+             solution.confidence, queries_used)
+    return solution
+
+
+# ── Routes: actions (human-gated tool execution) ──────────────────────────────
+@app.post("/api/actions/execute")
+def execute_action(
+    body: ExecuteActionRequest,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> JSONResponse:
+    call = ToolCall(
+        tool=body.tool,
+        args=body.args,
+        status="approved" if body.approved else "proposed",
+        idempotency_key=body.idempotency_key,
+    )
+    result = tool_executor.execute(principal, call)
+    code = {"executed": 200, "rejected": 403, "failed": 502}.get(result.status, 400)
+    log.info("action_execute tenant=%s tool=%s status=%s by=%s",
+             principal.tenant_id, result.tool, result.status, principal.uid)
+    return JSONResponse(
+        {"ok": result.ok, "tool": result.tool, "status": result.status, "detail": result.detail},
+        status_code=code,
+    )
+
+
+@app.get("/api/actions/audit")
+def list_action_audit(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    require_role(principal, "admin")
+    return [
+        {"tool": e.tool, "status": e.status, "actor_uid": e.actor_uid,
+         "idempotency_key": e.idempotency_key, "at": e.at, "args_digest": e.args_digest}
+        for e in audit_store.list_for_tenant(principal.tenant_id)
+    ]
 
 
 # ── Routes: insights (knowledge analytics + gap detection) ────────────────────

@@ -167,3 +167,104 @@ def test_vector_search_ranks_embedded_chunks() -> None:
     assert response.status_code == 200
     assert body["citations"][0]["file_name"] == "audit.pdf"
     assert body["retrieval"]["candidates_ranked"] >= 1
+
+
+# ── /api/solve (agentic workflow) ─────────────────────────────────────────────
+def test_solve_requires_auth() -> None:
+    assert client.post("/api/solve", json={"problem": "anything"}).status_code == 401
+
+
+def test_solve_is_tenant_scoped() -> None:
+    # tenant-a asks about tenant-b's only topic → must not leak tenant-b sources.
+    res = client.post("/api/solve", json={"problem": "red elevator access"}, headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["tenant_id"] == "tenant-a"
+    files = [s["file_name"] for step in body["steps"] for s in step["sources"]]
+    assert "secret_b.pdf" not in files
+
+
+def test_solve_steps_are_grounded_or_open_questions() -> None:
+    # Every step must cite at least one source (no ungrounded/hallucinated steps).
+    res = client.post("/api/solve", json={"problem": "blue parking permits"}, headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["steps"], "expected a grounded workflow for an answerable problem"
+    for step in body["steps"]:
+        assert step["sources"], f"step {step['n']} has no sources (ungrounded)"
+        assert step["sources"][0]["file_name"] == "secret_a.pdf"
+    # Proposed actions stay human-gated.
+    tcs = [s["suggested_tool_call"] for s in body["steps"] if s["suggested_tool_call"]]
+    for tc in tcs:
+        assert tc["requires_approval"] is True
+        assert tc["status"] == "proposed"
+
+
+def test_solve_no_match_yields_open_questions() -> None:
+    res = client.post("/api/solve", json={"problem": "quarterly revenue in mongolia"}, headers=HEADERS_A)
+    body = res.json()
+    assert res.status_code == 200
+    assert body["steps"] == []
+    assert body["open_questions"]
+    assert body["confidence"] == 0.0
+
+
+def test_solve_shares_quota_breaker() -> None:
+    for _ in range(1000):
+        usage_store.increment_or_reject("tenant-a")
+    res = client.post("/api/solve", json={"problem": "blue parking"}, headers=HEADERS_A)
+    assert res.status_code == 429
+
+
+# ── /api/actions/execute (human-gated tool layer) ─────────────────────────────
+def test_execute_rejects_unknown_tool() -> None:
+    res = client.post("/api/actions/execute",
+                      json={"tool": "rm_rf_prod", "args": {}, "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 403
+    assert res.json()["status"] == "rejected"
+
+
+def test_execute_outward_requires_approval() -> None:
+    # Outward tool proposed (not approved) → rejected, no side effect.
+    res = client.post("/api/actions/execute",
+                      json={"tool": "create_jira_ticket",
+                            "args": {"project": "OPS", "summary": "x"}, "approved": False},
+                      headers=HEADERS_A)
+    assert res.status_code == 403
+    assert "approval" in res.json()["detail"]["reason"]
+
+
+def test_execute_approved_runs_dry_run() -> None:
+    # Mock token → admin (an approver). Dev → dry-run, no external call.
+    res = client.post("/api/actions/execute",
+                      json={"tool": "create_jira_ticket",
+                            "args": {"project": "OPS", "summary": "ship it"}, "approved": True},
+                      headers=HEADERS_A)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "executed"
+    assert body["detail"]["dry_run"] is True
+
+
+def test_execute_is_idempotent() -> None:
+    payload = {"tool": "create_jira_ticket",
+               "args": {"project": "OPS", "summary": "once"},
+               "approved": True, "idempotency_key": "dup-key-1"}
+    first = client.post("/api/actions/execute", json=payload, headers=HEADERS_A)
+    second = client.post("/api/actions/execute", json=payload, headers=HEADERS_A)
+    assert first.status_code == 200 and second.status_code == 200
+    assert "idempotent" in second.json()["detail"]["reason"]
+
+
+def test_action_audit_records_attempts() -> None:
+    client.post("/api/actions/execute",
+                json={"tool": "create_jira_ticket",
+                      "args": {"project": "OPS", "summary": "audit me"}, "approved": True},
+                headers=HEADERS_A)
+    res = client.get("/api/actions/audit", headers=HEADERS_A)
+    assert res.status_code == 200
+    entries = res.json()
+    assert any(e["tool"] == "create_jira_ticket" and e["status"] == "executed" for e in entries)
+    # Raw args never stored — only a digest.
+    assert all("args" not in e and e["args_digest"] for e in entries)
