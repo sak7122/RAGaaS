@@ -9,6 +9,7 @@ import {
 import {
   FileText, UserRound, Lock,
   CircleHelp, Check, X, Loader2, Zap, ShieldCheck,
+  Rocket, Upload, ListChecks, ArrowUpRight,
 } from "lucide-react";
 
 // ── Types (mirror backend/workflow.py) ────────────────────────────────────────
@@ -218,10 +219,9 @@ export function WorkflowResult({ solution, onExecute, disabled }: {
       transition={{ duration: 0.35 }}>
       <div className="wf-result-head">
         <div className="wf-result-problem">
-          <span className="wf-result-label">Workflow for</span>
-          <h3>{solution.problem}</h3>
+          <span className="wf-result-label"><ListChecks size={12} /> Your workflow</span>
           <span className="wf-result-meta">
-            {solution.steps.length} steps · {solution.tenant_id}
+            {solution.steps.length} steps · grounded in your documents
           </span>
         </div>
         <ConfidenceRing value={solution.confidence} />
@@ -251,6 +251,37 @@ export function WorkflowResult({ solution, onExecute, disabled }: {
           </ul>
         </motion.div>
       )}
+
+      <WhatsNext solution={solution} />
+    </motion.div>
+  );
+}
+
+// ── What's next — actionable follow-ups derived from the solution ─────────────
+function WhatsNext({ solution }: { solution: WorkflowSolution }) {
+  const pending = solution.steps.filter((s) => s.suggested_tool_call).length;
+  const gaps = solution.open_questions.length;
+  const items: { icon: typeof Rocket; text: string }[] = [];
+  if (pending > 0)
+    items.push({ icon: ShieldCheck, text: `Approve ${pending} proposed action${pending > 1 ? "s" : ""} above to execute ${pending > 1 ? "them" : "it"}.` });
+  if (gaps > 0)
+    items.push({ icon: Upload, text: `Upload documents covering ${gaps} open question${gaps > 1 ? "s" : ""} to close the gap${gaps > 1 ? "s" : ""}.` });
+  if (solution.confidence < 0.5)
+    items.push({ icon: FileText, text: "Confidence is low — add more source docs, then re-run for a stronger plan." });
+  items.push({ icon: ArrowUpRight, text: "Refine the problem or solve a related one for a deeper workflow." });
+
+  return (
+    <motion.div className="wf-next"
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+      <span className="wf-next-label"><Rocket size={13} /> What's next</span>
+      <ul>
+        {items.map((it, i) => {
+          const Icon = it.icon;
+          return (
+            <li key={i}><Icon size={13} className="wf-next-icon" /> {it.text}</li>
+          );
+        })}
+      </ul>
     </motion.div>
   );
 }

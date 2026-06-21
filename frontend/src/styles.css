@@ -2569,6 +2569,7 @@ html {
   gap: var(--sp-lg); margin-bottom: var(--sp-lg);
 }
 .wf-result-label {
+  display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.6px; color: var(--ink-48);
 }
@@ -2712,6 +2713,25 @@ html {
   padding: 24px; justify-content: center;
   border: 1px dashed var(--hairline); border-radius: var(--r-lg);
 }
+
+/* What's next */
+.wf-next {
+  margin-top: var(--sp-md);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--primary-glow);
+  background: linear-gradient(135deg, var(--primary-dim), rgba(10,132,255,0.02));
+  padding: 14px 18px;
+}
+.wf-next-label {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700; color: var(--primary);
+}
+.wf-next ul { margin: 9px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.wf-next li {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 13px; color: var(--ink-80); line-height: 1.4;
+}
+.wf-next-icon { color: var(--primary); flex-shrink: 0; margin-top: 2px; }
 
 .wf-spin { animation: wf-spin 0.8s linear infinite; }
 @keyframes wf-spin { to { transform: rotate(360deg); } }
