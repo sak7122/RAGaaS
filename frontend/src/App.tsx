@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { motion } from "framer-motion";
-import { LogOut } from "lucide-react";
+import { LogOut, Sparkles } from "lucide-react";
 import { ToastPortal } from "./components/ui";
 import {
   devSignInTenant,
@@ -18,12 +18,12 @@ import { DocumentList, DocumentMeta } from "./components/DocumentList";
 import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
-import { WorkflowView, WorkflowSolution, ExecResult } from "./components/WorkflowView";
 import { AuthForm } from "./components/AuthForm";
 import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Privacy } from "./pages/Privacy";
 import { SharePage } from "./pages/SharePage";
+import { SolvePage } from "./pages/SolvePage";
 import { DEMO, demoFetch } from "./demoBackend";
 import "./styles.css";
 
@@ -83,6 +83,8 @@ if (path === "/privacy") {
   createRoot(document.getElementById("root")!).render(<Privacy />);
 } else if (path.startsWith("/share/")) {
   createRoot(document.getElementById("root")!).render(<SharePage />);
+} else if (path === "/solve") {
+  createRoot(document.getElementById("root")!).render(<SolvePage />);
 } else {
   createRoot(document.getElementById("root")!).render(<App />);
 }
@@ -99,7 +101,7 @@ function App() {
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [members, setMembers]         = useState<Member[]>([]);
-  const [view, setView]               = useState<"chat" | "solve" | "insights" | "integrations">("chat");
+  const [view, setView]               = useState<"chat" | "insights" | "integrations">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
@@ -184,36 +186,6 @@ function App() {
       const res = await apiFetch(`${API}/api/insights`, { headers: authHeaders() });
       if (!res.ok) return null;
       return await res.json();
-    } catch {
-      return null;
-    }
-  }
-
-  async function solveWorkflow(problem: string): Promise<WorkflowSolution | null> {
-    try {
-      const res = await apiFetch(`${API}/api/solve`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ problem }),
-      });
-      if (!res.ok) return null;
-      const body = await res.json();
-      refreshStatus();
-      return body as WorkflowSolution;
-    } catch {
-      return null;
-    }
-  }
-
-  async function executeAction(tool: string, args: Record<string, unknown>): Promise<ExecResult | null> {
-    try {
-      const res = await apiFetch(`${API}/api/actions/execute`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ tool, args, approved: true }),
-      });
-      const body = await res.json();
-      return { ok: !!body.ok, status: body.status, detail: body.detail ?? {} };
     } catch {
       return null;
     }
@@ -516,7 +488,7 @@ function App() {
           </motion.span>
         )}
         <div className="nav-tabs">
-          {(["chat", "solve", "insights", "integrations"] as const).map((v) => (
+          {(["chat", "insights", "integrations"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -536,6 +508,18 @@ function App() {
             </button>
           ))}
         </div>
+        <motion.a
+          className="nav-solve"
+          href="/solve"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.25 }}
+          whileHover={{ scale: 1.04 }}
+          whileTap={{ scale: 0.96 }}
+          title="Open the Workflow Engine"
+        >
+          <Sparkles size={13} /> Solve
+        </motion.a>
         <span className="nav-spacer" />
         <motion.div
           className="nav-status"
@@ -582,15 +566,7 @@ function App() {
       </ErrorBoundary>
 
       <main className="workspace">
-        {view === "solve" ? (
-          <ErrorBoundary>
-            <WorkflowView
-              onSolve={solveWorkflow}
-              onExecute={executeAction}
-              disabled={!online}
-            />
-          </ErrorBoundary>
-        ) : view === "insights" ? (
+        {view === "insights" ? (
           <ErrorBoundary>
             <InsightsPanel
               fetchInsights={fetchInsights}

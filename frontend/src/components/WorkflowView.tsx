@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, ReactNode, useRef, useState } from "react";
+import { MouseEvent, ReactNode, useRef, useState } from "react";
 import {
   motion,
   AnimatePresence,
@@ -7,8 +7,8 @@ import {
   useTransform,
 } from "framer-motion";
 import {
-  Workflow, Sparkles, ArrowRight, FileText, UserRound, Lock,
-  CircleHelp, Check, X, Loader2, Zap, ShieldCheck, CornerDownRight,
+  FileText, UserRound, Lock,
+  CircleHelp, Check, X, Loader2, Zap, ShieldCheck,
 } from "lucide-react";
 
 // ── Types (mirror backend/workflow.py) ────────────────────────────────────────
@@ -31,19 +31,7 @@ export type WorkflowSolution = {
 };
 
 export type ExecResult = { ok: boolean; status: string; detail: Record<string, unknown> };
-
-interface Props {
-  onSolve: (problem: string) => Promise<WorkflowSolution | null>;
-  onExecute: (tool: string, args: Record<string, unknown>) => Promise<ExecResult | null>;
-  disabled: boolean;
-}
-
-const PROMPTS = [
-  "Onboard a new backend engineer",
-  "Draft our incident response runbook",
-  "What's the process to offboard a contractor?",
-  "Plan a security audit for Q3",
-];
+export type OnExecute = (tool: string, args: Record<string, unknown>) => Promise<ExecResult | null>;
 
 // ── Pointer-tilt card — the mouse tracker ─────────────────────────────────────
 function TiltCard({ children, className }: { children: ReactNode; className?: string }) {
@@ -104,7 +92,7 @@ function ConfidenceRing({ value }: { value: number }) {
 // ── Tool-call approval card ───────────────────────────────────────────────────
 function ActionCard({ call, onExecute, disabled }: {
   call: ToolCall;
-  onExecute: Props["onExecute"];
+  onExecute: OnExecute;
   disabled: boolean;
 }) {
   const [state, setState] = useState<"idle" | "running" | "done" | "blocked" | "error">("idle");
@@ -172,7 +160,7 @@ function ActionCard({ call, onExecute, disabled }: {
 
 // ── Step card ─────────────────────────────────────────────────────────────────
 function StepCard({ step, onExecute, disabled }: {
-  step: WorkflowStep; onExecute: Props["onExecute"]; disabled: boolean;
+  step: WorkflowStep; onExecute: OnExecute; disabled: boolean;
 }) {
   return (
     <motion.li
@@ -218,142 +206,51 @@ function StepCard({ step, onExecute, disabled }: {
   );
 }
 
-// ── Main view ─────────────────────────────────────────────────────────────────
-export function WorkflowView({ onSolve, onExecute, disabled }: Props) {
-  const [problem, setProblem] = useState("");
-  const [solution, setSolution] = useState<WorkflowSolution | null>(null);
-  const [loading, setLoading] = useState(false);
-  const heroRef = useRef<HTMLDivElement>(null);
-
-  function spotlight(e: MouseEvent<HTMLDivElement>) {
-    const el = heroRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    el.style.setProperty("--spot-x", `${e.clientX - r.left}px`);
-    el.style.setProperty("--spot-y", `${e.clientY - r.top}px`);
-  }
-
-  async function run(text: string) {
-    const q = text.trim();
-    if (!q || loading || disabled) return;
-    setLoading(true);
-    const res = await onSolve(q);
-    setSolution(res);
-    setLoading(false);
-  }
-
-  function submit(e: FormEvent) { e.preventDefault(); run(problem); }
-
+// ── Result renderer (used by the standalone /solve page) ──────────────────────
+export function WorkflowResult({ solution, onExecute, disabled }: {
+  solution: WorkflowSolution;
+  onExecute: OnExecute;
+  disabled: boolean;
+}) {
   return (
-    <div className="wf">
-      <motion.div
-        ref={heroRef}
-        className="wf-hero"
-        onMouseMove={spotlight}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-      >
-        <div className="wf-hero-glow" />
-        <div className="wf-hero-head">
-          <span className="wf-hero-badge"><Workflow size={13} /> Workflow Engine</span>
-          <h2 className="wf-hero-title">Describe a problem. Get a grounded plan.</h2>
-          <p className="wf-hero-sub">
-            Not just an answer — an ordered, cited workflow with actions you can run.
-          </p>
+    <motion.div className="wf-result"
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}>
+      <div className="wf-result-head">
+        <div className="wf-result-problem">
+          <span className="wf-result-label">Workflow for</span>
+          <h3>{solution.problem}</h3>
+          <span className="wf-result-meta">
+            {solution.steps.length} steps · {solution.tenant_id}
+          </span>
         </div>
-        <form className="wf-form" onSubmit={submit}>
-          <textarea
-            className="wf-input"
-            value={problem}
-            onChange={(e) => setProblem(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e as unknown as FormEvent); }}
-            placeholder="e.g. Onboard a new backend engineer…  (⌘/Ctrl+Enter)"
-            rows={2}
-            disabled={disabled || loading}
-          />
-          <motion.button
-            type="submit" className="wf-solve-btn"
-            disabled={disabled || loading || !problem.trim()}
-            whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.95 }}
-          >
-            {loading ? <Loader2 size={15} className="wf-spin" /> : <Sparkles size={15} />}
-            {loading ? "Planning…" : "Solve"}
-            {!loading && <ArrowRight size={15} />}
-          </motion.button>
-        </form>
-        {!solution && !loading && (
-          <div className="wf-prompts">
-            {PROMPTS.map((p, i) => (
-              <motion.button
-                key={p} type="button" className="wf-prompt"
-                onClick={() => { setProblem(p); run(p); }}
-                disabled={disabled}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 + i * 0.06 }}
-                whileHover={{ y: -2 }}
-              >
-                <CornerDownRight size={12} /> {p}
-              </motion.button>
-            ))}
-          </div>
-        )}
-      </motion.div>
+        <ConfidenceRing value={solution.confidence} />
+      </div>
 
-      <AnimatePresence mode="wait">
-        {loading && (
-          <motion.div key="load" className="wf-loading"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {[0, 1, 2].map((i) => (
-              <motion.div key={i} className="wf-skeleton"
-                initial={{ opacity: 0.4 }}
-                animate={{ opacity: [0.4, 0.8, 0.4] }}
-                transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.18 }} />
-            ))}
-          </motion.div>
-        )}
+      {solution.steps.length > 0 ? (
+        <motion.ol className="wf-steps"
+          initial="hidden" animate="show"
+          variants={{ show: { transition: { staggerChildren: 0.09 } } }}>
+          {solution.steps.map((s) => (
+            <StepCard key={s.n} step={s} onExecute={onExecute} disabled={disabled} />
+          ))}
+        </motion.ol>
+      ) : (
+        <div className="wf-empty-steps">
+          <Zap size={18} /> No grounded steps — see open questions below.
+        </div>
+      )}
 
-        {solution && !loading && (
-          <motion.div key="sol" className="wf-result"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="wf-result-head">
-              <div className="wf-result-problem">
-                <span className="wf-result-label">Workflow for</span>
-                <h3>{solution.problem}</h3>
-                <span className="wf-result-meta">
-                  {solution.steps.length} steps · {solution.tenant_id}
-                </span>
-              </div>
-              <ConfidenceRing value={solution.confidence} />
-            </div>
-
-            {solution.steps.length > 0 ? (
-              <motion.ol className="wf-steps"
-                initial="hidden" animate="show"
-                variants={{ show: { transition: { staggerChildren: 0.09 } } }}>
-                {solution.steps.map((s) => (
-                  <StepCard key={s.n} step={s} onExecute={onExecute} disabled={disabled} />
-                ))}
-              </motion.ol>
-            ) : (
-              <div className="wf-empty-steps">
-                <Zap size={20} /> No grounded steps — see open questions below.
-              </div>
-            )}
-
-            {solution.open_questions.length > 0 && (
-              <motion.div className="wf-gaps"
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}>
-                <span className="wf-gaps-label"><CircleHelp size={13} /> Open questions</span>
-                <ul>
-                  {solution.open_questions.map((q, i) => <li key={i}>{q}</li>)}
-                </ul>
-              </motion.div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+      {solution.open_questions.length > 0 && (
+        <motion.div className="wf-gaps"
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}>
+          <span className="wf-gaps-label"><CircleHelp size={13} /> Open questions</span>
+          <ul>
+            {solution.open_questions.map((q, i) => <li key={i}>{q}</li>)}
+          </ul>
+        </motion.div>
+      )}
+    </motion.div>
   );
 }
