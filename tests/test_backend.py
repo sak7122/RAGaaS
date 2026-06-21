@@ -268,3 +268,81 @@ def test_action_audit_records_attempts() -> None:
     assert any(e["tool"] == "create_jira_ticket" and e["status"] == "executed" for e in entries)
     # Raw args never stored — only a digest.
     assert all("args" not in e and e["args_digest"] for e in entries)
+
+
+# ── GeminiPlanner two-stage fallback (regression: solver lost the answer) ──────
+# These drive solve() with a stubbed client — no Gemini creds, no network. The
+# bug fixed here: structuring failure used to discard the grounded answer and
+# emit "could not produce a workflow" even though chat answered fine.
+from types import SimpleNamespace
+
+from backend.planner import GeminiPlanner
+from backend.workflow import SolveRequest
+from backend.tools import create_tool_registry
+
+SEC_CHUNKS = [{
+    "file_name": "form10k_instructions.pdf", "page": 3, "chunk_index": 0,
+    "text": "A large accelerated filer must file its Form 10-K within 60 days "
+            "after the end of the fiscal year covered by the report.",
+    "score": 0.82,
+}]
+SEC_ANSWER = ("A large accelerated filer has 60 days after fiscal year end to "
+              "file Form 10-K (General Instruction A).")
+
+
+def _planner_with_response(text: str) -> GeminiPlanner:
+    """GeminiPlanner whose LLM call returns `text` — bypasses __init__/google SDK."""
+    p = object.__new__(GeminiPlanner)
+    p.model = "stub"
+    p._types = SimpleNamespace(GenerateContentConfig=lambda **kw: None)
+    p.client = SimpleNamespace(models=SimpleNamespace(
+        generate_content=lambda **kw: SimpleNamespace(text=text)
+    ))
+    return p
+
+
+def _solve(planner: GeminiPlanner, answer: str):
+    return planner.solve(
+        "tenant-a",
+        SolveRequest(problem="How many days do we have to file our Form 10-K?"),
+        retrieve=lambda tid, q, k: SEC_CHUNKS,
+        registry=create_tool_registry(),
+        answer=lambda q, chunks: answer,
+    )
+
+
+def test_planner_falls_back_to_answer_step_on_prose_response() -> None:
+    # Model replies in prose (not JSON) — the exact prod failure mode.
+    sol = _solve(_planner_with_response("Sure! Here is some prose, not JSON."), SEC_ANSWER)
+    assert sol.open_questions == []
+    assert len(sol.steps) == 1, "fallback must keep the answer as a step"
+    assert "60 days" in sol.steps[0].action
+    assert sol.steps[0].sources[0].file_name == "form10k_instructions.pdf"
+
+
+def test_planner_falls_back_when_structuring_returns_zero_steps() -> None:
+    empty = '{"problem":"x","steps":[],"open_questions":[],"confidence":0.5}'
+    sol = _solve(_planner_with_response(empty), SEC_ANSWER)
+    assert len(sol.steps) == 1
+    assert "60 days" in sol.steps[0].action
+
+
+def test_planner_uses_valid_structured_json_when_returned() -> None:
+    good = (
+        '{"problem":"file 10-K","steps":[{"n":1,"action":"File within 60 days of '
+        'fiscal year end","rationale":"large accelerated filer deadline","sources":'
+        '[{"file_name":"form10k_instructions.pdf","page":3,"chunk_index":0,'
+        '"excerpt":"60 days","score":0.82}]}],"open_questions":[],"confidence":0.8}'
+    )
+    sol = _solve(_planner_with_response(good), SEC_ANSWER)
+    assert len(sol.steps) == 1
+    assert sol.confidence == 0.8
+    assert sol.tenant_id == "tenant-a"  # server identity, overwritten by planner
+
+
+def test_planner_no_answer_yields_open_questions_not_step() -> None:
+    # Stage 1 says docs don't cover it → no fabricated workflow.
+    sol = _solve(_planner_with_response("ignored"),
+                 "I cannot find that answer in your uploaded documents.")
+    assert sol.steps == []
+    assert sol.open_questions

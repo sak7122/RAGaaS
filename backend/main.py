@@ -682,7 +682,11 @@ def solve(req: SolveRequest, principal: Annotated[Principal, Depends(principal_f
         # tid is always tenant_id (planner is tenant-bound); pass history for rewrite.
         return retrieve_chunks(tid, query, k, history)
 
-    solution = planner.solve(tenant_id, req, _retrieve, tool_registry)
+    def _answer(question: str, chunks: list[dict]) -> str:
+        # Stage 1 of solve = the exact grounded answer path /api/chat uses.
+        return generator.generate(question, chunks, history)
+
+    solution = planner.solve(tenant_id, req, _retrieve, tool_registry, _answer)
     # Server owns identity + quota fields — never trust the planner for these.
     solution.tenant_id = tenant_id
     solution.queries_used = queries_used
