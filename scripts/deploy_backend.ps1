@@ -13,7 +13,7 @@ gcloud run deploy $serviceName `
     --region $region `
     --allow-unauthenticated `
     --min-instances 0 `
-    --max-instances 10 `
+    --max-instances 1 `
     --memory 512Mi `
     --cpu 1 `
     --set-env-vars "GCP_PROJECT_ID=$projectId,RAGAAS_ENV=production,FIREBASE_PROJECT_ID=$firebaseProject,GCS_BUCKET=$gcsBucket,CORS_ORIGIN_REGEX=$corsRegex"

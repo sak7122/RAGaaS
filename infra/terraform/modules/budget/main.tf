@@ -14,10 +14,22 @@ variable "alert_email" {
   description = "Email address that receives budget threshold alerts"
 }
 
-variable "amount_usd" {
+variable "amount" {
   type        = number
-  description = "Monthly budget amount in USD"
-  default     = 5
+  description = "Monthly budget amount (net of credits), in currency_code"
+  default     = 100
+}
+
+variable "currency_code" {
+  type        = string
+  description = "Must match the billing account's currency (this account bills in INR)"
+  default     = "INR"
+}
+
+variable "pubsub_topic" {
+  type        = string
+  description = "Pub/Sub topic id for programmatic notifications (kill switch). Empty = email only."
+  default     = ""
 }
 
 locals {
@@ -42,7 +54,7 @@ resource "google_billing_budget" "monthly" {
   count = local.enabled ? 1 : 0
 
   billing_account = var.billing_account
-  display_name    = "RAGaaS monthly budget ($${var.amount_usd})"
+  display_name    = "RAGaaS monthly budget (${var.amount} ${var.currency_code})"
 
   budget_filter {
     projects               = ["projects/${var.project_id}"]
@@ -52,8 +64,8 @@ resource "google_billing_budget" "monthly" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
-      units         = tostring(var.amount_usd)
+      currency_code = var.currency_code
+      units         = tostring(var.amount)
     }
   }
 
@@ -81,5 +93,9 @@ resource "google_billing_budget" "monthly" {
     ]
     # Also email the billing account admins/users by default
     disable_default_iam_recipients = false
+    # Kill switch: every budget update (several/day) goes to Pub/Sub; the
+    # function unlinks billing once net spend passes the budget amount.
+    pubsub_topic   = var.pubsub_topic != "" ? var.pubsub_topic : null
+    schema_version = "1.0"
   }
 }

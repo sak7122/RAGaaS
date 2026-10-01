@@ -29,6 +29,8 @@ locals {
     "roles/resourcemanager.projectIamAdmin", # manage project IAM bindings
     "roles/iam.workloadIdentityPoolAdmin",   # manage WIF pools/providers
     "roles/datastore.owner",                 # create Firestore database
+    "roles/bigquery.admin",                  # create ragaas_ops dataset/tables
+    "roles/cloudscheduler.admin",            # create scheduler SA + jobs
   ]
 }
 
@@ -53,8 +55,10 @@ locals {
     "roles/datastore.user",
     "roles/storage.objectAdmin",
     "roles/firebase.sdkAdminServiceAgent",
-    "roles/firebaseauth.admin", # set tenant_id custom claims on invite accept
-    "roles/aiplatform.user",    # Vertex AI embeddings + Gemini generation
+    "roles/firebaseauth.admin",  # set tenant_id custom claims on invite accept
+    "roles/aiplatform.user",     # Vertex AI embeddings + Gemini generation
+    "roles/bigquery.dataEditor", # create/write tenant + ops datasets & tables
+    "roles/bigquery.jobUser",    # run query/load jobs
   ]
 }
 
@@ -70,9 +74,9 @@ resource "google_project_iam_member" "runtime" {
 # Needs storage + AR write + log write to build and push images via Cloud Build.
 locals {
   compute_sa_roles = [
-    "roles/storage.objectAdmin",      # read source zip from Cloud Build staging bucket
-    "roles/artifactregistry.writer",  # push built image to AR
-    "roles/logging.logWriter",        # write build logs to Cloud Logging
+    "roles/storage.objectAdmin",     # read source zip from Cloud Build staging bucket
+    "roles/artifactregistry.writer", # push built image to AR
+    "roles/logging.logWriter",       # write build logs to Cloud Logging
   ]
 }
 

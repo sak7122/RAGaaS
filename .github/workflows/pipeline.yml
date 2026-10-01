@@ -167,10 +167,10 @@ jobs:
             --project "${{ secrets.GCP_PROJECT_ID }}" \
             --allow-unauthenticated \
             --min-instances 0 \
-            --max-instances 10 \
+            --max-instances 1 \
             --memory 512Mi \
             --cpu 1 \
-            --timeout 60 \
+            --timeout 300 \
             --port 8000 \
             --set-env-vars "\
           RAGAAS_ENV=production,\
@@ -183,8 +183,8 @@ jobs:
           SMTP_HOST=${{ secrets.SMTP_HOST }},\
           SMTP_PORT=${{ secrets.SMTP_PORT }},\
           SMTP_USER=${{ secrets.SMTP_USER }},\
-          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }},\
           SMTP_FROM=${{ secrets.SMTP_FROM }}" \
+            --update-secrets "SMTP_PASSWORD=ragaas-smtp-password:latest" \
             --format "value(status.url)")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Backend deployed to: $URL"

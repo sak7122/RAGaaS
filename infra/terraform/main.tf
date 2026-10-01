@@ -30,12 +30,23 @@ module "wif" {
   depends_on       = [module.iam]
 }
 
+module "billing_killswitch" {
+  source         = "./modules/billing_killswitch"
+  project_id     = var.project_id
+  project_number = data.google_project.project.number
+  region         = var.region
+  dry_run        = var.killswitch_dry_run
+  depends_on     = [module.apis]
+}
+
 module "budget" {
   source          = "./modules/budget"
   project_id      = var.project_id
   billing_account = var.billing_account
   alert_email     = var.alert_email
-  amount_usd      = var.budget_amount_usd
+  amount          = var.budget_amount
+  currency_code   = var.budget_currency
+  pubsub_topic    = module.billing_killswitch.topic_id
   depends_on      = [module.apis]
 }
 
@@ -70,4 +81,20 @@ module "cloud_run" {
   memory              = var.cloud_run_memory
   cpu                 = var.cloud_run_cpu
   depends_on          = [module.apis, module.iam, module.storage]
+}
+
+module "bigquery" {
+  source     = "./modules/bigquery"
+  project_id = var.project_id
+  region     = var.region
+  depends_on = [module.apis]
+}
+
+module "scheduler" {
+  source                 = "./modules/scheduler"
+  project_id             = var.project_id
+  region                 = var.region
+  cloud_run_url          = module.cloud_run.service_url
+  cloud_run_service_name = module.cloud_run.service_name
+  depends_on             = [module.apis, module.cloud_run]
 }

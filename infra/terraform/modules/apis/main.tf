@@ -16,8 +16,14 @@ locals {
     "cloudresourcemanager.googleapis.com",
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
+    "cloudbilling.googleapis.com",   # kill switch unlinks billing
+    "cloudfunctions.googleapis.com", # kill switch function
+    "eventarc.googleapis.com",
+    "pubsub.googleapis.com",
     "monitoring.googleapis.com",
-    "aiplatform.googleapis.com", # Vertex AI: embeddings + Gemini generation
+    "aiplatform.googleapis.com",     # Vertex AI: embeddings + Gemini generation
+    "bigquery.googleapis.com",       # structured tenant data + ops analytics
+    "cloudscheduler.googleapis.com", # scheduled per-tenant agent pipelines
   ]
 }
 

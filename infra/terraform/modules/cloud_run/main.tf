@@ -124,7 +124,11 @@ resource "google_cloud_run_v2_service" "backend" {
       # and the real app. Add HTTP health checks via the app pipeline later.
     }
 
-    timeout = "60s"
+    # 300s: scheduled fan-out endpoints (nightly per-tenant report, analytics
+    # export) run inside a single request. Bumped from 60s — see pipeline.yml's
+    # `gcloud run deploy --timeout` flag, which must match (it overrides this
+    # value on every CI deploy; the two are not DRY and must change together).
+    timeout = "300s"
   }
 
   lifecycle {

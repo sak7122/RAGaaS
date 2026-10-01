@@ -50,10 +50,22 @@ variable "alert_email" {
   default     = "f20212477g@alumni.bits-pilani.ac.in"
 }
 
-variable "budget_amount_usd" {
+variable "budget_amount" {
   type        = number
-  description = "Monthly budget amount in USD"
-  default     = 5
+  description = "Monthly budget (net of credits) - billing is auto-disabled above this"
+  default     = 100
+}
+
+variable "budget_currency" {
+  type        = string
+  description = "Budget currency; must match the billing account (INR)"
+  default     = "INR"
+}
+
+variable "killswitch_dry_run" {
+  type        = bool
+  description = "true = kill switch logs only, never disables billing"
+  default     = false
 }
 
 variable "cloud_run_min_instances" {
@@ -65,7 +77,7 @@ variable "cloud_run_min_instances" {
 variable "cloud_run_max_instances" {
   type        = number
   description = "Maximum Cloud Run instances"
-  default     = 10
+  default     = 1
 }
 
 variable "cloud_run_memory" {

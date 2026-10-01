@@ -125,9 +125,50 @@ Phase 1  (real RAG)            →  next — without it there is no product
 Phase 2  (trust & UX)          →  before first paying user
 Phase 3  (sellable surface)    →  for B2B / self-serve
 Phase 4  (hardening)           →  continuous, start once traffic is real
+Phase 5  (BigQuery + Scheduler infra)  →  unblocks Phase 6-8
+Phase 6  (structured data + query tool) →  Track A core
+Phase 7  (code interpreter tool)        →  depends on Phase 6
+Phase 8  (scheduled agent pipelines)    →  depends on Phase 5
+Phase 9  (usage dashboard, stretch)     →  depends on Phase 8
 ```
 
 ## Cost posture
 - Cloud Run min-instances=0 → $0 idle.
 - Firestore vector + Gemini Flash → near-free at demo load; pennies per real query.
 - Budget alert at $5/mo armed in Phase 0.
+- BigQuery (Phase 5+): batch loads are free; storage ~$0.02/GB/mo; first 1 TiB
+  scanned/month free. Zero-baseline preserved — no Cloud SQL/AlloyDB.
+
+---
+
+## Phase 5 — Terraform catch-up + BigQuery/Scheduler infra (S) — **shipped**
+
+`bigquery.googleapis.com`/`cloudscheduler.googleapis.com` are now enabled via
+`infra/terraform/modules/apis`. New modules: `modules/bigquery` (dataset
+`ragaas_ops` + tables `query_log`/`tool_audit`/`usage_daily`), `modules/scheduler`
+(`ragaas-scheduler` SA, `roles/run.invoker`-only, two `google_cloud_scheduler_job`
+resources: hourly `analytics_export`, daily `nightly_knowledge_gap_report`).
+`ragaas-runtime` SA gained `bigquery.dataEditor`/`bigquery.jobUser`; `ragaas-deployer`
+gained `bigquery.admin`/`cloudscheduler.admin`. Cloud Run request timeout bumped
+60s → 300s (both `modules/cloud_run/main.tf` and the `--timeout` flag in
+`pipeline.yml`'s deploy step — these are NOT DRY, change together).
+
+**Isolation model for Phase 6+**: tenant structured data lives in one BigQuery
+dataset PER TENANT (`tenant_{tenant_id}`), created lazily by app code (not
+Terraform — tenant IDs aren't known ahead of time). This is deliberate: the SQL
+run against tenant data is LLM-generated and all tenants share one runtime SA,
+so a `WHERE tenant_id=...` filter alone is too weak — dataset-per-tenant plus a
+dry-run `referenced_tables` check (Phase 6) makes cross-tenant reads
+structurally impossible instead of relying on the LLM writing the filter
+correctly. `ragaas_ops` (this phase) is the opposite case: shared dataset, plain
+`tenant_id` column — safe because it's queried only by trusted, hardcoded
+backend SQL, never LLM-generated.
+
+**Known blocker (unrelated to this phase's code):** `terraform init` against the
+prod backend (`gs://ragaas-prod-tfstate`) currently fails —
+`UserProjectAccountProblem: billing account for the owning project is disabled
+in state closed`. `terraform validate` passes (config is syntactically correct),
+but no `plan`/`apply` can run against prod until the billing account is
+reactivated. Check this before attempting Phase 5's `terraform apply`.
+
+See [../CLAUDE.md] for local dev. Full design rationale: `.claude/plans/humble-shimmying-reef.md`.
