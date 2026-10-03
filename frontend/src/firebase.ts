@@ -5,6 +5,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onIdTokenChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
   updateProfile,
@@ -56,6 +57,12 @@ export async function signUpWithPassword(
   return cred;
 }
 
+// Sends Firebase's reset email. Resolves for unknown addresses too (when email
+// enumeration protection is on), so the UI must not reveal whether an account exists.
+export function sendPasswordReset(email: string): Promise<void> {
+  return sendPasswordResetEmail(auth, email);
+}
+
 export function signOutUser(): Promise<void> {
   return signOut(auth);
 }
@@ -72,7 +79,8 @@ export function friendlyAuthError(err: unknown): string {
   // Surface the real code in the console so misconfig is diagnosable.
   if (code) console.error("[auth]", code, err);
   const map: Record<string, string> = {
-    "auth/invalid-email":            "That email address doesn't look right.",
+    "auth/invalid-email":            "Enter an email like name@company.com.",
+    "auth/missing-email":            "Enter your work email first.",
     "auth/user-not-found":           "No account found with that email.",
     "auth/wrong-password":           "Incorrect password. Try again.",
     "auth/invalid-credential":       "Email or password is incorrect.",

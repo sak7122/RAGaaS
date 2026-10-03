@@ -347,12 +347,21 @@ function App() {
           // accepting an invite (the caller is joining someone else's workspace).
           const ws = (() => { try { return localStorage.getItem("ragaas:workspace") || ""; } catch { return ""; } })();
           if (ws) {
+            // Sign-up step-2 answers travel with the name (see SignUpForm).
+            const onboarding = (() => {
+              try { return JSON.parse(localStorage.getItem("ragaas:onboarding") || "null"); } catch { return null; }
+            })();
             apiFetch(`${API}/api/tenant/profile`, {
               method: "PUT",
               headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name: ws }),
-            }).then(() => { try { localStorage.removeItem("ragaas:workspace"); } catch { /* */ } })
-              .catch(() => { /* retry next login */ });
+              body: JSON.stringify(onboarding ? { name: ws, onboarding } : { name: ws }),
+            }).then((r) => {
+              if (!r.ok) return;  // keep for retry on next login
+              try {
+                localStorage.removeItem("ragaas:workspace");
+                localStorage.removeItem("ragaas:onboarding");
+              } catch { /* */ }
+            }).catch(() => { /* retry next login */ });
           }
         }
       } else {
@@ -386,7 +395,10 @@ function App() {
       await signUpWithPassword(email, password, profile.name);
       // Workspace name is the user's label for their new tenant; the backend
       // keys the tenant by uid (private workspace). Persist for display.
-      try { localStorage.setItem("ragaas:workspace", profile.workspace); } catch { /* ignore */ }
+      try {
+        localStorage.setItem("ragaas:workspace", profile.workspace);
+        localStorage.setItem("ragaas:onboarding", JSON.stringify(profile.onboarding));
+      } catch { /* ignore */ }
       // watchAuth fires and populates session state.
     } catch (err: unknown) {
       setAuthState(friendlyAuthError(err));

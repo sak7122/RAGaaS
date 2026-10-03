@@ -1,7 +1,6 @@
 import { FormEvent, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Lock, Mail, Eye, EyeOff, Loader2, AlertCircle } from "lucide-react";
-import { Aurora, GradientText, ShinyButton } from "./ui";
+import { sendPasswordReset, friendlyAuthError } from "../firebase";
+import { AuthLayout, Field, PasswordInput, Spinner, isEmail } from "./authKit";
 
 interface AuthFormProps {
   onSignIn: (email: string, password: string) => Promise<void>;
@@ -9,154 +8,135 @@ interface AuthFormProps {
   error: string;
 }
 
+type Mode = "signin" | "reset" | "reset-sent";
+
 export function AuthForm({ onSignIn, onSwitchToSignUp, error }: AuthFormProps) {
+  const [mode, setMode]         = useState<Mode>("signin");
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [showPw, setShowPw]     = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
   const [loading, setLoading]   = useState(false);
+  const [resetError, setResetError] = useState("");
 
-  const canSubmit = !!email && !!password && !loading;
+  const emailError = emailTouched && email && !isEmail(email)
+    ? "Enter an email like name@company.com." : "";
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSignIn(e: FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    setEmailTouched(true);
+    if (!isEmail(email) || !password || loading) return;
     setLoading(true);
+    try { await onSignIn(email.trim(), password); } finally { setLoading(false); }
+  }
+
+  async function handleReset(e: FormEvent) {
+    e.preventDefault();
+    setEmailTouched(true);
+    if (!isEmail(email) || loading) return;
+    setLoading(true);
+    setResetError("");
     try {
-      await onSignIn(email, password);
+      await sendPasswordReset(email.trim());
+      setMode("reset-sent");
+    } catch (err) {
+      setResetError(friendlyAuthError(err));
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <div className="auth-scene">
-      <Aurora />
+  const emailField = (
+    <Field label="Work email" error={emailError}>
+      {({ id, describedBy, invalid }) => (
+        <input
+          id={id} type="email" className="authx-input" value={email}
+          onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)}
+          autoComplete="email" inputMode="email" autoFocus required
+          aria-invalid={invalid || undefined} aria-describedby={describedBy}
+        />
+      )}
+    </Field>
+  );
 
-      <motion.div
-        className="auth-card glass-card"
-        initial={{ opacity: 0, y: 24, scale: 0.96, filter: "blur(8px)" }}
-        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-        transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      >
-        {/* Brand */}
-        <div className="auth-brand">
-          <motion.span
-            className="auth-brand-mark"
-            initial={{ scale: 0.5, opacity: 0, rotate: -10 }}
-            animate={{ scale: 1, opacity: 1, rotate: 0 }}
-            transition={{ delay: 0.15, duration: 0.45, ease: [0.34, 1.56, 0.64, 1] }}
-          >
-            R
-          </motion.span>
-          <motion.span
-            className="auth-brand-name"
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.25, duration: 0.35 }}
-          >
-            <GradientText>RAGaaS</GradientText>
-          </motion.span>
-        </div>
+  if (mode === "reset-sent") {
+    return (
+      <AuthLayout>
+        <h1 className="authx-title">Check your inbox</h1>
+        <p className="authx-sub">
+          If an account exists for <strong>{email.trim()}</strong>, a reset link is on its way.
+          It can take a couple of minutes.
+        </p>
+        <button type="button" className="authx-btn authx-btn-secondary"
+                onClick={() => { setMode("signin"); setPassword(""); }}>
+          Back to sign in
+        </button>
+      </AuthLayout>
+    );
+  }
 
-        <motion.h2
-          className="auth-title"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3, duration: 0.3 }}
-        >
-          Welcome back
-        </motion.h2>
-        <motion.p
-          className="auth-sub"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.38, duration: 0.3 }}
-        >
-          Sign in to your knowledge base
-        </motion.p>
-
-        <motion.form
-          className="auth-form"
-          onSubmit={handleSubmit}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.42, duration: 0.3 }}
-        >
-          <div className="auth-field">
-            <Mail size={15} className="auth-field-icon" />
-            <input
-              type="email"
-              className="auth-input"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              autoFocus
-              required
-            />
-          </div>
-
-          <div className="auth-field">
-            <Lock size={15} className="auth-field-icon" />
-            <input
-              type={showPw ? "text" : "password"}
-              className="auth-input"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-            <button
-              type="button"
-              className="auth-eye"
-              onClick={() => setShowPw((v) => !v)}
-              tabIndex={-1}
-              aria-label={showPw ? "Hide password" : "Show password"}
-            >
-              {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
-            </button>
-          </div>
-
-          <AnimatePresence mode="wait">
-            {error && (
-              <motion.div
-                className="error-banner"
-                initial={{ opacity: 0, height: 0, y: -4 }}
-                animate={{ opacity: 1, height: "auto", y: 0 }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.22 }}
-              >
-                <AlertCircle size={13} />
-                {error}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <ShinyButton
-            type="submit"
-            className="auth-submit"
-            disabled={!canSubmit}
-          >
-            {loading ? <Loader2 size={16} className="auth-spin" /> : "Sign in →"}
-          </ShinyButton>
-        </motion.form>
-
-        <motion.div
-          className="auth-footer"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.55 }}
-        >
-          <button type="button" className="auth-toggle" onClick={onSwitchToSignUp}>
-            No account? <span className="auth-toggle-accent">Create one</span>
+  if (mode === "reset") {
+    return (
+      <AuthLayout>
+        <h1 className="authx-title">Reset your password</h1>
+        <p className="authx-sub">We'll email you a link to choose a new one.</p>
+        <form className="authx-form" onSubmit={handleReset} noValidate>
+          {emailField}
+          {resetError && <p className="authx-alert" role="alert">{resetError}</p>}
+          <button type="submit" className="authx-btn authx-btn-primary"
+                  disabled={loading} aria-busy={loading}>
+            {loading ? <><Spinner /> Sending…</> : "Send reset link"}
           </button>
-          <p className="auth-privacy">
-            By continuing you agree to our{" "}
-            <a href="/privacy" className="auth-privacy-link">Privacy &amp; Data Policy</a>.
-          </p>
-        </motion.div>
-      </motion.div>
-    </div>
+        </form>
+        <p className="authx-switch">
+          <button type="button" className="authx-link" onClick={() => setMode("signin")}>
+            Back to sign in
+          </button>
+        </p>
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout>
+      <h1 className="authx-title">Sign in</h1>
+      <p className="authx-sub">Use the work email your workspace was set up with.</p>
+
+      <form className="authx-form" onSubmit={handleSignIn} noValidate>
+        {emailField}
+        <Field
+          label="Password"
+          aside={
+            <button type="button" className="authx-link authx-link-sm"
+                    onClick={() => { setMode("reset"); setResetError(""); }}>
+              Forgot password?
+            </button>
+          }
+        >
+          {({ id, describedBy }) => (
+            <PasswordInput
+              id={id} value={password} onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password" required aria-describedby={describedBy}
+            />
+          )}
+        </Field>
+
+        {error && <p className="authx-alert" role="alert">{error}</p>}
+
+        <button type="submit" className="authx-btn authx-btn-primary"
+                disabled={loading || !email || !password} aria-busy={loading}>
+          {loading ? <><Spinner /> Signing in…</> : "Sign in"}
+        </button>
+      </form>
+
+      <p className="authx-switch">
+        New to RAGaaS?{" "}
+        <button type="button" className="authx-link" onClick={onSwitchToSignUp}>
+          Create an account
+        </button>
+      </p>
+      <p className="authx-legal">
+        By signing in you agree to the <a href="/privacy">Privacy &amp; Data Policy</a>.
+      </p>
+    </AuthLayout>
   );
 }

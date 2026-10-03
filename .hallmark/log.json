@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-10-03",
+    "macrostructure": "Split Ledger (form | facts aside)",
+    "theme": "design-system: docs/DESIGN.md (Apple light)",
+    "genre": "modern-minimal",
+    "enrichment": "none (typography only)",
+    "scope": "auth screens (sign-in, password reset, 2-step sign-up)",
+    "brief": "RAGaaS production auth redesign: labelled fields, B2B onboarding fields, light Apple system"
+  }
+]
