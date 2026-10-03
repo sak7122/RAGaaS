@@ -1,0 +1,19 @@
+[Unit]
+Description=RAGaaS sandbox backend (dev mode, memory stores)
+After=network.target ragaas-emulator.service
+Wants=ragaas-emulator.service
+
+[Service]
+User=ragaas
+WorkingDirectory=/opt/ragaas/app
+Environment=RAGAAS_ENV=development
+Environment=RAGAAS_USE_MEMORY_STORE=1
+Environment=FIREBASE_PROJECT_ID=ragaas-local
+Environment=FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+# One worker: memory stores are per-process.
+ExecStart=/opt/ragaas/app/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+MemoryMax=450M
+
+[Install]
+WantedBy=multi-user.target

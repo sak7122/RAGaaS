@@ -1,5 +1,6 @@
 """
-Tenant profile — a human-friendly name for a workspace (tenant_id).
+Tenant profile — a human-friendly name for a workspace (tenant_id), plus the
+onboarding answers captured at sign-up (company size, role, primary use, …).
 
 New self-serve workspaces get a uid-based id like `ws-abc123`. This store holds
 the display name the user typed at signup ("Acme Corp") so the UI shows that
@@ -28,6 +29,8 @@ def prettify(tenant_id: str) -> str:
 class TenantProfileStore(Protocol):
     def get_name(self, tenant_id: str) -> str | None: ...
     def set_name(self, tenant_id: str, name: str) -> None: ...
+    def get_onboarding(self, tenant_id: str) -> dict | None: ...
+    def set_onboarding(self, tenant_id: str, data: dict) -> None: ...
     def delete_tenant(self, tenant_id: str) -> None: ...
 
 
@@ -38,6 +41,7 @@ class MemoryTenantProfileStore:
             "tenant-a": "Tenant A",
             "tenant-b": "Tenant B",
         }
+        self._onboarding: dict[str, dict] = {}
         self._lock = threading.Lock()
 
     def get_name(self, tenant_id: str) -> str | None:
@@ -48,9 +52,18 @@ class MemoryTenantProfileStore:
         with self._lock:
             self._names[tenant_id] = name
 
+    def get_onboarding(self, tenant_id: str) -> dict | None:
+        with self._lock:
+            return self._onboarding.get(tenant_id)
+
+    def set_onboarding(self, tenant_id: str, data: dict) -> None:
+        with self._lock:
+            self._onboarding[tenant_id] = dict(data)
+
     def delete_tenant(self, tenant_id: str) -> None:
         with self._lock:
             self._names.pop(tenant_id, None)
+            self._onboarding.pop(tenant_id, None)
 
 
 class FirestoreTenantProfileStore:
@@ -66,6 +79,13 @@ class FirestoreTenantProfileStore:
 
     def set_name(self, tenant_id: str, name: str) -> None:
         self._doc(tenant_id).set({"name": name}, merge=True)
+
+    def get_onboarding(self, tenant_id: str) -> dict | None:
+        snap = self._doc(tenant_id).get()
+        return (snap.to_dict() or {}).get("onboarding") if snap.exists else None
+
+    def set_onboarding(self, tenant_id: str, data: dict) -> None:
+        self._doc(tenant_id).set({"onboarding": data}, merge=True)
 
     def delete_tenant(self, tenant_id: str) -> None:
         self._doc(tenant_id).delete()

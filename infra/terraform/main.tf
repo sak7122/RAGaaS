@@ -98,3 +98,19 @@ module "scheduler" {
   cloud_run_service_name = module.cloud_run.service_name
   depends_on             = [module.apis, module.cloud_run]
 }
+
+module "academy" {
+  source     = "./modules/academy"
+  project_id = var.project_id
+  # Built from the id (not module.iam) so a targeted apply doesn't drag in IAM drift.
+  runtime_sa_email = "ragaas-runtime@${var.project_id}.iam.gserviceaccount.com"
+  tenants          = var.academy_tenants
+  depends_on       = [module.apis]
+}
+
+module "sandbox_vm" {
+  source         = "./modules/sandbox_vm"
+  project_id     = var.project_id
+  project_number = data.google_project.project.number
+  depends_on     = [module.apis]
+}

@@ -91,3 +91,9 @@ variable "cloud_run_cpu" {
   description = "vCPU limit per Cloud Run instance"
   default     = "1"
 }
+
+variable "academy_tenants" {
+  type        = list(string)
+  description = "Tenants that get a Vertex AI Search data store + engine (RAGaaS Academy)"
+  default     = ["pilot"]
+}

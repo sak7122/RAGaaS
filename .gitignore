@@ -38,3 +38,6 @@ test-results/
 playwright-report/
 .playwright-mcp/
 ui-retrieval-trace.png
+
+# Sandbox VM frontend build (scripts/sandbox_vm.ps1 deploy)
+.sandbox-dist/

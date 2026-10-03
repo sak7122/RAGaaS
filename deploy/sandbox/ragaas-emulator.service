@@ -1,0 +1,14 @@
+[Unit]
+Description=RAGaaS sandbox Firebase Auth emulator
+After=network.target
+
+[Service]
+User=ragaas
+WorkingDirectory=/opt/ragaas/app/deploy/sandbox
+Environment=JAVA_TOOL_OPTIONS=-Xmx256m
+ExecStart=/usr/local/bin/firebase emulators:start --only auth --project ragaas-local --config firebase.sandbox.json
+Restart=on-failure
+MemoryMax=500M
+
+[Install]
+WantedBy=multi-user.target

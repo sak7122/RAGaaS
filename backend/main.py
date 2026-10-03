@@ -11,7 +11,7 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +41,9 @@ from backend.share_store import create_share_store
 from backend.widget_store import create_widget_key_store
 from backend.slack_store import create_slack_store
 from backend.planner import create_planner
+from backend.academy.router import create_academy_router
+from backend.academy.search import create_knowledge_search
+from backend.academy.store import create_academy_store
 from backend.workflow import SolveRequest, WorkflowSolution, ToolCall
 from backend.tools import (
     ToolServices,
@@ -77,6 +80,17 @@ TOKEN_TENANT_MAP: dict[str, str] = (
         "mock-tenant-token-abc": "tenant-demo",
         "tenant-a-token":        "tenant-a",
         "tenant-b-token":        "tenant-b",
+    }
+    if config.env == "development" else {}
+)
+
+# Dev-only non-admin learners for Academy demos: token -> (tenant, uid).
+# Their profiles (department/clearance) come from scripts/academy_demo_seed.py.
+DEV_LEARNER_TOKENS: dict[str, tuple[str, str]] = (
+    {
+        "demo-sales-token": ("tenant-demo", "demo-sales"),
+        "demo-eng-token":   ("tenant-demo", "demo-eng"),
+        "demo-new-token":   ("tenant-demo", "demo-new"),
     }
     if config.env == "development" else {}
 )
@@ -141,6 +155,8 @@ tool_registry        = create_tool_registry(ToolServices(
 ))
 audit_store          = create_audit_store(config.env)
 tool_executor        = create_tool_executor(config.env, tool_registry, audit_store)
+academy_store        = create_academy_store()
+academy_search       = create_knowledge_search()
 log.info("startup env=%s emulator=%s embedder=%s generator=%s planner=%s tools=%d",
          config.env, config.use_emulator, type(embedder).__name__, type(generator).__name__,
          type(planner).__name__, len(tool_registry.specs()))
@@ -192,8 +208,19 @@ class TenantStatus(BaseModel):
     documents: int
 
 
+class OnboardingProfile(BaseModel):
+    """Answers from sign-up step 2. Closed vocabularies so they can drive
+    Academy defaults (role templates, path suggestions) without free-text parsing."""
+    company_size: Literal["1-10", "11-50", "51-200", "201-1000", "1000+"]
+    role: Literal["founder", "hr", "lnd", "ops", "engineering", "other"]
+    primary_use: Literal["onboarding", "knowledge_base", "compliance", "support"]
+    country: str = Field(min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")  # ISO 3166-1 alpha-2
+    phone: str | None = Field(default=None, max_length=32, pattern=r"^[+0-9 ()-]*$")
+
+
 class TenantProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+    onboarding: OnboardingProfile | None = None
 
 
 class DocumentMeta(BaseModel):
@@ -289,6 +316,9 @@ def principal_from_auth(
         # Dev mock tokens always get admin so all endpoints are testable
         return Principal(uid=f"dev-{tenant_id}", tenant_id=tenant_id,
                          email=f"{tenant_id}@ragaas.local", role="admin")
+    if token in DEV_LEARNER_TOKENS:
+        tenant_id, uid = DEV_LEARNER_TOKENS[token]
+        return Principal(uid=uid, tenant_id=tenant_id, email=f"{uid}@ragaas.local", role="viewer")
     return verify_firebase_token(token, member_store)
 
 
@@ -469,10 +499,23 @@ def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
     ]
 
 
+# ── Routes: academy (docs/PRD-onboarding.md) ─────────────────────────────────
+app.include_router(create_academy_router(
+    store=academy_store,
+    search=academy_search,
+    auth=principal_from_auth,
+    require_role=require_role,
+    enforce_quota=enforce_quota,
+    max_upload_bytes=MAX_UPLOAD_BYTES,
+))
+
+
 # ── Routes: health ────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "env": config.env, "time": datetime.now(timezone.utc).isoformat()}
+    # kb ping doubles as the keep-alive that stops a Free-tier Supabase pausing.
+    return {"ok": True, "env": config.env, "time": datetime.now(timezone.utc).isoformat(),
+            "kb": academy_store.ping()}
 
 
 # ── Routes: tenant status ─────────────────────────────────────────────────────
@@ -497,6 +540,8 @@ def set_tenant_profile(
 ) -> dict:
     require_role(principal, "admin")
     tenant_profile_store.set_name(principal.tenant_id, body.name.strip())
+    if body.onboarding is not None:
+        tenant_profile_store.set_onboarding(principal.tenant_id, body.onboarding.model_dump())
     log.info("tenant_name set tenant=%s name=%s", principal.tenant_id, body.name.strip())
     return {"ok": True, "tenant_name": body.name.strip()}
 

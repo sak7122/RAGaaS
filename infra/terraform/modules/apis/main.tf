@@ -21,9 +21,13 @@ locals {
     "eventarc.googleapis.com",
     "pubsub.googleapis.com",
     "monitoring.googleapis.com",
-    "aiplatform.googleapis.com",     # Vertex AI: embeddings + Gemini generation
-    "bigquery.googleapis.com",       # structured tenant data + ops analytics
-    "cloudscheduler.googleapis.com", # scheduled per-tenant agent pipelines
+    "aiplatform.googleapis.com",      # Vertex AI: embeddings + Gemini generation
+    "bigquery.googleapis.com",        # structured tenant data + ops analytics
+    "cloudscheduler.googleapis.com",  # scheduled per-tenant agent pipelines
+    "discoveryengine.googleapis.com", # Vertex AI Search (Academy; trial-credit covered)
+    "secretmanager.googleapis.com",
+    "compute.googleapis.com", # sandbox VM (free-tier e2-micro)
+    "iap.googleapis.com",     # SSH/port tunnelling to the sandbox, no public ports
   ]
 }
 
