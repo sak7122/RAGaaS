@@ -18,6 +18,7 @@ import { DocumentList, DocumentMeta } from "./components/DocumentList";
 import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
+import { AcademyPanel } from "./components/AcademyPanel";
 import { AuthForm } from "./components/AuthForm";
 import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -101,7 +102,7 @@ function App() {
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
   const [members, setMembers]         = useState<Member[]>([]);
-  const [view, setView]               = useState<"chat" | "insights" | "integrations">("chat");
+  const [view, setView]               = useState<"chat" | "insights" | "academy" | "integrations">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
@@ -500,7 +501,7 @@ function App() {
           </motion.span>
         )}
         <div className="nav-tabs">
-          {(["chat", "insights", "integrations"] as const).map((v) => (
+          {(["chat", "insights", "academy", "integrations"] as const).map((v) => (
             <button
               key={v}
               type="button"
@@ -584,6 +585,10 @@ function App() {
               fetchInsights={fetchInsights}
               onQuickAsk={(q) => { setView("chat"); setQuestion(q); }}
             />
+          </ErrorBoundary>
+        ) : view === "academy" ? (
+          <ErrorBoundary>
+            <AcademyPanel apiUrl={API} authHeaders={authHeaders} />
           </ErrorBoundary>
         ) : view === "integrations" ? (
           <ErrorBoundary>
