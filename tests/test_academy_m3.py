@@ -131,6 +131,10 @@ def test_learner_payloads_never_contain_answers(catalog) -> None:
     for it in body["items"]:
         assert set(it) == {"id", "type", "stem", "options"}
     assert all(s["title"] for s in body["sources"])
+    assert body["pass_mark"] == 0.8
+    assert client.get("/api/academy/me").json()["is_admin"] is False
+    as_admin()
+    assert client.get("/api/academy/me").json()["is_admin"] is True
 
 
 def test_out_of_scope_modules_are_404(catalog) -> None:

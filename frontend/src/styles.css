@@ -3681,3 +3681,128 @@ html, body { overflow-x: clip; }
   .global-nav { min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
   .global-nav > * { flex-shrink: 0; }
 }
+
+/* ─── Academy: lesson Markdown ─────────────────────────────────────────────── */
+.acad-md ol { margin: 0 0 var(--sp-sm); padding-left: var(--sp-lg); }
+.acad-md li { margin-bottom: var(--sp-xxs); }
+.acad-md-h { font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--ink); margin: var(--sp-md) 0 var(--sp-xs); }
+.acad-md-h-sm { font-size: 16px; }
+.acad-md > :first-child { margin-top: 0; }
+.acad-md code { font-size: 0.9em; background: var(--pearl); border: 1px solid var(--divider); padding: 0 var(--sp-xxs); border-radius: 4px; }
+.acad-md a { color: var(--primary); }
+.acad-notice.is-info { background: var(--primary-dim); color: var(--ink); }
+
+/* ─── Academy: learner app ─────────────────────────────────────────────────── */
+.learn-card-head { display: flex; align-items: center; gap: var(--sp-sm); flex-wrap: wrap; }
+.learn-card-head .acad-count { display: inline-flex; align-items: center; gap: var(--sp-xxs); }
+.learn-kind {
+  display: inline-flex; align-items: center; gap: var(--sp-xxs); flex: none;
+  font-size: 12px; font-weight: 600; padding: 2px var(--sp-xs); border-radius: var(--r-pill);
+  background: var(--primary-dim); color: var(--primary);
+}
+.learn-kind.is-review { background: var(--acad-warn-wash); color: var(--acad-warn-ink); }
+
+.learn-today, .learn-modules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.learn-task, .learn-module-row {
+  width: 100%; min-height: 56px; display: flex; align-items: center; gap: var(--sp-sm);
+  background: transparent; border: 0; border-bottom: 1px solid var(--divider);
+  padding: var(--sp-sm) 0; text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.learn-today li:last-child .learn-task, .learn-modules li:last-child .learn-module-row { border-bottom: 0; }
+.learn-task:hover .acad-strong, .learn-module-row:hover .acad-strong { color: var(--primary); }
+.learn-task:focus-visible, .learn-module-row:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; border-radius: var(--r-sm); }
+.learn-task-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.learn-task-time { white-space: nowrap; }
+.learn-task-arrow { flex: none; color: var(--authx-muted); }
+
+.learn-bar { height: 6px; border-radius: var(--r-pill); background: var(--divider); overflow: hidden; }
+.learn-bar > span { display: block; height: 100%; background: var(--acad-ok-ink); border-radius: inherit; transition: width 0.4s var(--authx-ease-out); }
+.learn-step {
+  width: 28px; height: 28px; flex: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--pearl); border: 1px solid var(--hairline); font-size: 13px; font-weight: 600; color: var(--ink-80);
+}
+.learn-step.is-done { background: var(--acad-ok-wash); border-color: transparent; color: var(--acad-ok-ink); }
+
+.learn-back { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--sp-xxs); min-height: 44px; }
+.learn-lesson-head { display: flex; flex-direction: column; gap: var(--sp-xxs); }
+.learn-lesson-head p { margin: 0; }
+.learn-title {
+  font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -0.3px;
+  color: var(--ink); margin: 0; overflow-wrap: anywhere; scroll-margin-top: var(--sp-lg);
+}
+.learn-title:focus { outline: none; }
+.learn-title:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 4px; border-radius: var(--r-sm); }
+
+.learn-qs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-md); }
+.learn-q { border: 1px solid var(--divider); border-radius: var(--r-md); padding: var(--sp-md); background: var(--pearl); display: flex; flex-direction: column; gap: var(--sp-sm); }
+.learn-q.is-right { border-color: var(--acad-ok-ink); background: var(--canvas); }
+.learn-q.is-wrong { border-color: var(--authx-red-ink); background: var(--canvas); }
+.learn-q-set { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-sm); }
+.learn-q-stem { display: flex; gap: var(--sp-sm); padding: 0; font-size: 16px; font-weight: 500; color: var(--ink); line-height: 1.45; }
+.learn-q-num {
+  width: 24px; height: 24px; flex: none; border-radius: 50%; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--canvas); border: 1px solid var(--hairline); font-size: 12px; font-weight: 600; color: var(--ink-80);
+}
+.learn-q-type { display: block; font-size: 12px; font-weight: 600; color: var(--authx-muted); margin-bottom: 2px; }
+.learn-choices { display: flex; flex-direction: column; gap: var(--sp-xs); }
+.learn-choices-row { flex-direction: row; flex-wrap: wrap; }
+.learn-choices-row .learn-choice { flex: 1 1 140px; }
+.learn-choice {
+  display: flex; align-items: center; gap: var(--sp-sm); min-height: 44px;
+  padding: var(--sp-xs) var(--sp-sm); border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: var(--canvas); cursor: pointer; font-size: 15px; color: var(--ink); line-height: 1.4;
+}
+.learn-choice input { width: 18px; height: 18px; flex: none; accent-color: var(--primary); margin: 0; }
+.learn-choice:hover { border-color: var(--primary); }
+.learn-choice:has(input:checked) { border-color: var(--primary); background: var(--primary-dim); }
+.learn-choice:has(input:focus-visible) { outline: 2px solid var(--primary-focus); outline-offset: 2px; }
+.learn-q-set:disabled .learn-choice { cursor: default; }
+.learn-q-set:disabled .learn-choice:hover { border-color: var(--hairline); }
+.learn-q.is-right .learn-choice.is-answer,
+.learn-q.is-wrong .learn-choice.is-answer { border-color: var(--acad-ok-ink); background: var(--acad-ok-wash); }
+.learn-q.is-wrong .learn-choice:not(.is-answer):has(input:checked) { border-color: var(--authx-red-ink); background: var(--authx-red-wash); }
+
+.learn-feedback { display: flex; flex-direction: column; gap: var(--sp-xxs); font-size: 14px; line-height: 1.5; color: var(--ink-80); }
+.learn-feedback p { margin: 0; }
+.learn-verdict { display: inline-flex; align-items: center; gap: var(--sp-xxs); font-weight: 600; }
+.learn-verdict.is-right { color: var(--acad-ok-ink); }
+.learn-verdict.is-wrong { color: var(--authx-red-ink); }
+
+.learn-result {
+  display: flex; gap: var(--sp-lg); align-items: flex-start; padding: var(--sp-md) var(--sp-lg);
+  border-radius: var(--r-lg); border: 1px solid var(--hairline); background: var(--pearl);
+}
+.learn-result:focus { outline: none; }
+.learn-result:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; }
+.learn-result.is-pass { background: var(--acad-ok-wash); border-color: transparent; }
+.learn-result.is-fail { background: var(--acad-warn-wash); border-color: transparent; }
+.learn-score { font-family: var(--font-display); font-size: 40px; font-weight: 600; letter-spacing: -0.5px; margin: 0; color: var(--ink); line-height: 1; }
+.learn-result-body { display: flex; flex-direction: column; gap: var(--sp-xs); min-width: 0; }
+.learn-result-body p { margin: 0; }
+.learn-result .authx-btn { display: inline-flex; align-items: center; gap: var(--sp-xxs); }
+
+.learn-ask { gap: var(--sp-sm); }
+.learn-ask-summary {
+  display: inline-flex; align-items: center; gap: var(--sp-xs); min-height: 32px;
+  font-weight: 600; color: var(--primary); cursor: pointer; list-style: none;
+}
+.learn-ask-summary::-webkit-details-marker { display: none; }
+.learn-ask-summary:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: 2px; border-radius: var(--r-sm); }
+.learn-ask-form { display: flex; gap: var(--sp-xs); }
+.learn-ask-form .authx-input { flex: 1; min-width: 0; }
+.learn-ask-answer { border-left: 3px solid var(--primary); padding-left: var(--sp-sm); }
+
+@media (max-width: 833px) {
+  /* Academy gets the whole phone screen; the chat sidebar has nothing for it. */
+  .shell:has(> .workspace > .acad) { grid-template-rows: 52px minmax(0, 1fr); }
+  .shell:has(> .workspace > .acad) > .sidebar { display: none; }
+  .learn-title { font-size: 22px; }
+  .learn-result { flex-direction: column; gap: var(--sp-sm); padding: var(--sp-md); }
+  .learn-ask-form { flex-direction: column; }
+  .learn-q { padding: var(--sp-sm); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .learn-bar > span { transition: none; }
+}

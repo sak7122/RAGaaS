@@ -1,6 +1,8 @@
 // Academy admin (M1 + M2): knowledge base, learners, learning paths.
 // Reuses the .authx-* field/button styles; layout lives in .acad-* (styles.css).
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LearnerView } from "./LearnerView";
+import { Markdown, Notice, readError } from "./academyShared";
 
 interface Props {
   apiUrl: string;
@@ -36,18 +38,9 @@ type PathT = {
 };
 
 const LEVELS = ["Public", "Internal", "Restricted"];
-type Section = "kb" | "learners" | "paths";
+type Section = "kb" | "learners" | "paths" | "learn";
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
-async function readError(r: Response): Promise<string> {
-  try {
-    const body = await r.json();
-    if (typeof body.detail === "string") return body.detail;
-    if (Array.isArray(body.detail)) return body.detail.map((d: { msg?: string }) => d.msg).join("; ");
-  } catch { /* not JSON */ }
-  return `Request failed (${r.status}).`;
-}
-
 function when(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -58,43 +51,6 @@ function StatusBadge({ status }: { status: string }) {
     generating: "Generating", failed: "Failed", draft: "Draft", published: "Published", stale: "Needs review",
   };
   return <span className={`acad-badge is-${status}`}>{label[status] ?? status}</span>;
-}
-
-function Notice({ kind, children, onClose }: { kind: "ok" | "error"; children: ReactNode; onClose?: () => void }) {
-  return (
-    <div className={`acad-notice is-${kind}`} role={kind === "error" ? "alert" : "status"}>
-      <span>{children}</span>
-      {onClose && <button type="button" className="authx-link authx-link-sm" onClick={onClose}>Dismiss</button>}
-    </div>
-  );
-}
-
-// Minimal, safe Markdown → React (paragraphs, "- " bullets, **bold**). No HTML injection.
-function Markdown({ text }: { text: string }) {
-  const inline = (s: string) => s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : part);
-  const blocks = text.trim().split(/\n{2,}/);
-  return (
-    <div className="acad-md">
-      {blocks.map((b, i) => {
-        const lines = b.split("\n");
-        const bullets = lines.filter((l) => /^\s*[-*]\s+/.test(l));
-        if (bullets.length && bullets.length === lines.filter((l) => l.trim()).length) {
-          return <ul key={i}>{bullets.map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*]\s+/, ""))}</li>)}</ul>;
-        }
-        const [head, ...rest] = lines;
-        if (rest.length && rest.every((l) => /^\s*[-*]\s+/.test(l))) {
-          return (
-            <div key={i}>
-              <p>{inline(head)}</p>
-              <ul>{rest.map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*]\s+/, ""))}</li>)}</ul>
-            </div>
-          );
-        }
-        return <p key={i}>{inline(b.replace(/^#+\s*/, ""))}</p>;
-      })}
-    </div>
-  );
 }
 
 function ConfirmButton({ label, confirmLabel, onConfirm, disabled }: {
@@ -693,6 +649,7 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
 export function AcademyPanel({ apiUrl, authHeaders }: Props) {
   const [section, setSection] = useState<Section>("kb");
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [docs, setDocs] = useState<Doc[]>([]);
 
   // authHeaders is a fresh function on every App render; read it through a ref so
@@ -714,7 +671,8 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
         const r = await api("/api/academy/me");
         const me = r.ok ? await r.json() : null;
         setEnabled(!!me?.enabled);
-        if (me?.enabled) loadDocs();
+        setIsAdmin(!!me?.is_admin);
+        if (me?.enabled && me?.is_admin) loadDocs();
       } catch { setEnabled(false); }
     })();
   }, [api, loadDocs]);
@@ -731,8 +689,18 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
     );
   }
 
+  if (!isAdmin) {
+    return (
+      <div className="acad">
+        <header className="acad-header"><h2 className="acad-h2">Your onboarding</h2></header>
+        <LearnerView api={api} />
+      </div>
+    );
+  }
+
   const tabs: { id: Section; label: string }[] = [
     { id: "kb", label: "Knowledge base" }, { id: "learners", label: "Learners" }, { id: "paths", label: "Learning paths" },
+    { id: "learn", label: "Learner preview" },
   ];
   return (
     <div className="acad">
@@ -750,6 +718,7 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
       {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
       {section === "learners" && <Learners api={api} />}
       {section === "paths" && <Paths api={api} docs={docs} />}
+      {section === "learn" && <LearnerView api={api} />}
     </div>
   );
 }

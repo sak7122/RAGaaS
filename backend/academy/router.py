@@ -210,6 +210,7 @@ class LearnModuleOut(BaseModel):
     title: str
     lesson_md: str
     est_minutes: int
+    pass_mark: float
     sources: list[SourceOut]
     items: list[LearnItemOut]
     progress: ProgressOut | None
@@ -568,6 +569,7 @@ def create_academy_router(
         ent = entitlement_for(principal)
         return {"uid": principal.uid, "tenant_id": principal.tenant_id,
                 "enabled": search.enabled_for(principal.tenant_id),
+                "is_admin": principal.role == "admin",
                 "clearance": ent.clearance, "department": ent.department, "role": ent.role}
 
     @router.post("/ask", response_model=AskOut)
@@ -864,7 +866,7 @@ def create_academy_router(
         pr, rv = progress.get(m.id), reviews.get(m.id)
         return LearnModuleOut(
             id=m.id, path_id=p.id, path_title=p.title, position=m.position, title=m.title,
-            lesson_md=m.lesson_md, est_minutes=est_minutes(m, items),
+            lesson_md=m.lesson_md, est_minutes=est_minutes(m, items), pass_mark=float(p.pass_mark),
             sources=sources_out(m.source_doc_ids, docs, ent),
             items=[LearnItemOut(id=i.id, type=i.type, stem=i.stem, options=i.options) for i in items],
             progress=ProgressOut(best_score=pr.best_score, last_score=pr.last_score, passed=pr.passed,
