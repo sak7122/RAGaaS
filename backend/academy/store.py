@@ -107,11 +107,58 @@ class Item:
     type: str                     # mcq | true_false | short_answer | scenario
     stem: str
     options: list[str] | None = None
-    answer: Any = None            # mcq: option index · true_false: bool
+    answer: Any = None            # mcq: option index · true_false: bool · free text: None
     explanation: str | None = None
     source_doc_ids: list[str] = field(default_factory=list)
     difficulty: int = 2
     status: str = "draft"
+    rubric: str | None = None     # short_answer / scenario: points a correct answer must cover
+
+
+@dataclass
+class Assignment:
+    tenant_id: str
+    learner_uid: str
+    path_id: str
+    status: str = "in_progress"   # in_progress | passed
+    score: float | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+@dataclass
+class Attempt:
+    tenant_id: str
+    learner_uid: str
+    item_id: str
+    module_id: str
+    response: Any
+    score: float
+    feedback: str | None = None
+    graded_by_model: str | None = None
+
+
+@dataclass
+class ModuleProgress:
+    tenant_id: str
+    learner_uid: str
+    module_id: str
+    path_id: str
+    best_score: float = 0.0
+    last_score: float = 0.0
+    passed: bool = False
+    attempts: int = 0
+    completed_at: str | None = None
+    updated_at: str = ""
+
+
+@dataclass
+class ReviewEntry:
+    tenant_id: str
+    learner_uid: str
+    module_id: str
+    due_at: str
+    interval_days: int = 1
 
 
 class AcademyStore(Protocol):
@@ -151,6 +198,17 @@ class AcademyStore(Protocol):
     def get_item(self, tenant_id: str, item_id: str) -> Item | None: ...
     def delete_item(self, tenant_id: str, item_id: str) -> bool: ...
     def list_items(self, tenant_id: str, module_ids: list[str]) -> list[Item]: ...
+    # learner progress (M3)
+    def get_assignment(self, tenant_id: str, uid: str, path_id: str) -> Assignment | None: ...
+    def upsert_assignment(self, a: Assignment) -> None: ...
+    def add_attempts(self, attempts: list[Attempt]) -> None: ...
+    def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None: ...
+    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]: ...
+    def upsert_progress(self, p: ModuleProgress) -> None: ...
+    def get_review(self, tenant_id: str, uid: str, module_id: str) -> ReviewEntry | None: ...
+    def list_reviews(self, tenant_id: str, uid: str) -> list[ReviewEntry]: ...
+    def upsert_review(self, r: ReviewEntry) -> None: ...
+    def delete_review(self, tenant_id: str, uid: str, module_id: str) -> None: ...
 
 
 def new_id() -> str:
@@ -180,6 +238,10 @@ class MemoryAcademyStore:
             self.modules: dict[str, Module] = {}
             self.items: dict[str, Item] = {}
             self.audit_log: list[dict] = []
+            self.assignments: dict[tuple[str, str, str], Assignment] = {}   # (tenant, uid, path)
+            self.attempts: list[Attempt] = []
+            self.progress: dict[tuple[str, str, str], ModuleProgress] = {}  # (tenant, uid, module)
+            self.reviews: dict[tuple[str, str, str], ReviewEntry] = {}      # (tenant, uid, module)
 
     # tenants / files / audit
     def ensure_tenant(self, tenant_id: str, name: str) -> None:
@@ -288,6 +350,11 @@ class MemoryAcademyStore:
 
     def delete_learner(self, tenant_id: str, uid: str) -> bool:
         with self._lock:
+            for table in (self.assignments, self.progress, self.reviews):
+                for key in [k for k in table if k[:2] == (tenant_id, uid)]:
+                    del table[key]
+            self.attempts = [a for a in self.attempts
+                             if (a.tenant_id, a.learner_uid) != (tenant_id, uid)]
             return self.learners.pop((tenant_id, uid), None) is not None
 
     # paths / modules / items
@@ -322,6 +389,12 @@ class MemoryAcademyStore:
                 del self.modules[mid]
             for iid in [i.id for i in self.items.values() if i.module_id in mods]:
                 del self.items[iid]
+            for key in [k for k in self.assignments if k[2] == path_id]:
+                del self.assignments[key]
+            for table in (self.progress, self.reviews):
+                for key in [k for k in table if k[2] in mods]:
+                    del table[key]
+            self.attempts = [a for a in self.attempts if a.module_id not in mods]
             return True
 
     def add_module(self, module: Module) -> None:
@@ -358,12 +431,58 @@ class MemoryAcademyStore:
             if not it or it.tenant_id != tenant_id:
                 return False
             del self.items[item_id]
+            self.attempts = [a for a in self.attempts if a.item_id != item_id]
             return True
 
     def list_items(self, tenant_id: str, module_ids: list[str]) -> list[Item]:
         with self._lock:
             return [copy.deepcopy(i) for i in self.items.values()
                     if i.tenant_id == tenant_id and i.module_id in module_ids]
+
+    # learner progress (M3)
+    def get_assignment(self, tenant_id: str, uid: str, path_id: str) -> Assignment | None:
+        with self._lock:
+            a = self.assignments.get((tenant_id, uid, path_id))
+            return copy.deepcopy(a) if a else None
+
+    def upsert_assignment(self, a: Assignment) -> None:
+        with self._lock:
+            self.assignments[(a.tenant_id, a.learner_uid, a.path_id)] = copy.deepcopy(a)
+
+    def add_attempts(self, attempts: list[Attempt]) -> None:
+        with self._lock:
+            self.attempts.extend(copy.deepcopy(a) for a in attempts)
+
+    def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None:
+        with self._lock:
+            p = self.progress.get((tenant_id, uid, module_id))
+            return copy.deepcopy(p) if p else None
+
+    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]:
+        with self._lock:
+            return [copy.deepcopy(p) for k, p in self.progress.items() if k[:2] == (tenant_id, uid)]
+
+    def upsert_progress(self, p: ModuleProgress) -> None:
+        with self._lock:
+            p.updated_at = now_iso()
+            self.progress[(p.tenant_id, p.learner_uid, p.module_id)] = copy.deepcopy(p)
+
+    def get_review(self, tenant_id: str, uid: str, module_id: str) -> ReviewEntry | None:
+        with self._lock:
+            r = self.reviews.get((tenant_id, uid, module_id))
+            return copy.deepcopy(r) if r else None
+
+    def list_reviews(self, tenant_id: str, uid: str) -> list[ReviewEntry]:
+        with self._lock:
+            return [copy.deepcopy(r) for k, r in self.reviews.items() if k[:2] == (tenant_id, uid)]
+
+    def upsert_review(self, r: ReviewEntry) -> None:
+        with self._lock:
+            self.reviews[(r.tenant_id, r.learner_uid, r.module_id)] = copy.deepcopy(r)
+
+    def delete_review(self, tenant_id: str, uid: str, module_id: str) -> None:
+        with self._lock:
+            self.reviews.pop((tenant_id, uid, module_id), None)
 
 
 # ── Supabase (prod) ───────────────────────────────────────────────────────────
@@ -382,7 +501,12 @@ class SupabaseAcademyStore:
     PATH_COLS = "id,tenant_id,title,rules,pass_mark,status,error,created_at,updated_at"
     MODULE_COLS = "id,tenant_id,path_id,position,title,lesson_md,source_doc_ids,status"
     ITEM_COLS = ("id,tenant_id,module_id,type,stem,options,answer,explanation,"
-                 "source_doc_ids,difficulty,status")
+                 "source_doc_ids,difficulty,status,rubric")
+    ASSIGN_COLS = "tenant_id,learner_uid,path_id,status,score,started_at,completed_at"
+    PROGRESS_COLS = ("tenant_id,learner_uid,module_id,path_id,best_score,last_score,passed,"
+                     "attempts,completed_at,updated_at")
+    REVIEW_COLS = "tenant_id,learner_uid,module_id,due_at,interval_days"
+    _UPSERT = {"Prefer": "resolution=merge-duplicates"}
 
     def __init__(self, url: str, service_key: str, timeout: float = 15.0) -> None:
         self._client = httpx.Client(
@@ -574,6 +698,65 @@ class SupabaseAcademyStore:
         rows = self._get("items", self.ITEM_COLS, module_id=f"in.({','.join(module_ids)})",
                          tenant_id=f"eq.{tenant_id}")
         return [Item(**row) for row in rows]
+
+    # learner progress (M3) — numeric columns arrive as JSON numbers or strings
+    @staticmethod
+    def _assignment(row: dict) -> Assignment:
+        score = row.get("score")
+        return Assignment(**{**row, "score": None if score is None else float(score)})
+
+    @staticmethod
+    def _progress(row: dict) -> ModuleProgress:
+        return ModuleProgress(**{**row, "best_score": float(row["best_score"]),
+                                 "last_score": float(row["last_score"])})
+
+    def get_assignment(self, tenant_id: str, uid: str, path_id: str) -> Assignment | None:
+        rows = self._get("assignments", self.ASSIGN_COLS, tenant_id=f"eq.{tenant_id}",
+                         learner_uid=f"eq.{uid}", path_id=f"eq.{path_id}")
+        return self._assignment(rows[0]) if rows else None
+
+    def upsert_assignment(self, a: Assignment) -> None:
+        self._rest("POST", "assignments", params={"on_conflict": "learner_uid,path_id"},
+                   json=_row(a), headers=self._UPSERT)
+
+    def add_attempts(self, attempts: list[Attempt]) -> None:
+        if attempts:
+            self._rest("POST", "attempts", json=[_row(a) for a in attempts])
+
+    def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None:
+        rows = self._get("module_progress", self.PROGRESS_COLS, tenant_id=f"eq.{tenant_id}",
+                         learner_uid=f"eq.{uid}", module_id=f"eq.{module_id}")
+        return self._progress(rows[0]) if rows else None
+
+    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]:
+        rows = self._get("module_progress", self.PROGRESS_COLS, tenant_id=f"eq.{tenant_id}",
+                         learner_uid=f"eq.{uid}")
+        return [self._progress(r) for r in rows]
+
+    def upsert_progress(self, p: ModuleProgress) -> None:
+        body = _row(p)
+        body["updated_at"] = now_iso()
+        self._rest("POST", "module_progress", params={"on_conflict": "learner_uid,module_id"},
+                   json=body, headers=self._UPSERT)
+
+    def get_review(self, tenant_id: str, uid: str, module_id: str) -> ReviewEntry | None:
+        rows = self._get("review_queue", self.REVIEW_COLS, tenant_id=f"eq.{tenant_id}",
+                         learner_uid=f"eq.{uid}", module_id=f"eq.{module_id}")
+        return ReviewEntry(**rows[0]) if rows else None
+
+    def list_reviews(self, tenant_id: str, uid: str) -> list[ReviewEntry]:
+        rows = self._get("review_queue", self.REVIEW_COLS, tenant_id=f"eq.{tenant_id}",
+                         learner_uid=f"eq.{uid}", order="due_at.asc")
+        return [ReviewEntry(**r) for r in rows]
+
+    def upsert_review(self, r: ReviewEntry) -> None:
+        self._rest("POST", "review_queue", params={"on_conflict": "learner_uid,module_id"},
+                   json=_row(r), headers=self._UPSERT)
+
+    def delete_review(self, tenant_id: str, uid: str, module_id: str) -> None:
+        self._rest("DELETE", "review_queue", params={"tenant_id": f"eq.{tenant_id}",
+                                                     "learner_uid": f"eq.{uid}",
+                                                     "module_id": f"eq.{module_id}"})
 
 
 def create_academy_store() -> AcademyStore:

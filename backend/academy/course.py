@@ -34,6 +34,7 @@ class DraftItem:
     answer: object
     explanation: str
     source_doc_ids: list[str] = field(default_factory=list)
+    rubric: str | None = None
 
 
 @dataclass
@@ -63,8 +64,25 @@ QUIZ_INSTRUCTIONS = (
     '{{"type": "mcq", "stem": "...", "options": ["...", "...", "...", "..."], "answer": 0, '
     '"explanation": "..."}} where answer is the index (0-3) of the correct option (vary which index '
     'is correct), and 1 true/false item shaped {{"type": "true_false", "stem": "...", "answer": true, '
-    '"explanation": "..."}}.'
+    '"explanation": "..."}}.{free}'
 )
+SHORT_ANSWER_SHAPE = (
+    ' Also write 1 short-answer item shaped {{"type": "short_answer", "stem": "a question answered in '
+    'one or two sentences", "rubric": "the key points a correct answer must contain, from the '
+    'documents", "explanation": "..."}}.'
+)
+SCENARIO_SHAPE = (
+    ' Also write 1 scenario item shaped {{"type": "scenario", "stem": "a realistic workplace '
+    'situation ending in: what should you do?", "rubric": "the correct action and the policy behind '
+    'it, from the documents", "explanation": "..."}}.'
+)
+
+
+def quiz_instructions(k: int) -> str:
+    """k items: 1 true/false, a short answer from 4 items, a scenario from 6, rest multiple choice."""
+    free = (SHORT_ANSWER_SHAPE if k >= 4 else "") + (SCENARIO_SHAPE if k >= 6 else "")
+    mcq = k - 1 - (k >= 4) - (k >= 6)
+    return QUIZ_INSTRUCTIONS.format(k=k, mcq=mcq, free=free.format())
 
 
 def extract_json_array(text: str) -> list:
@@ -103,6 +121,11 @@ def validate_item(raw: dict, source_doc_ids: list[str]) -> DraftItem | None:
         if not isinstance(ans, bool):
             return None
         return DraftItem("true_false", stem, None, ans, explanation, source_doc_ids)
+    if kind in ("short_answer", "scenario"):
+        rubric = str(raw.get("rubric", "")).strip()
+        if not rubric or len(rubric) > 1000:
+            return None
+        return DraftItem(kind, stem, None, None, explanation, source_doc_ids, rubric)
     return None
 
 
@@ -149,7 +172,7 @@ class CourseGenerator:
                 log.info("academy gen: skipped ungrounded topic %r", title)
                 continue
             src = sorted({c.doc_id for c in lesson.citations if c.doc_id})
-            quiz = self._search.generate(tenant_id, query, ent, QUIZ_INSTRUCTIONS.format(k=k, mcq=k - 1))
+            quiz = self._search.generate(tenant_id, query, ent, quiz_instructions(k))
             qsrc = sorted({c.doc_id for c in quiz.citations if c.doc_id}) or src
             items = [i for i in (validate_item(r, qsrc) for r in extract_json_array(quiz.answer)) if i]
             lesson_md = re.sub(r"^\s*#+ .*\n+", "", lesson.answer.strip())   # drop a stray title heading
@@ -179,6 +202,8 @@ class CourseGenerator:
                                    [own[0], *distractors], 0, f"Stated in {doc.title}.", [doc.id]))
             items.append(DraftItem("true_false", f"True or false: {own[-1]}", None, True,
                                    f"Stated in {doc.title}.", [doc.id]))
+            items.append(DraftItem("short_answer", f"In one or two sentences, what does {title} require?",
+                                   None, None, f"Stated in {doc.title}.", [doc.id], rubric=own[0]))
             lesson = "\n\n".join(own[:4]) + "\n\n**Key facts**\n" + "\n".join(f"- {s}" for s in own[:3])
             modules.append(DraftModule(title, lesson, [doc.id], items))
         return modules

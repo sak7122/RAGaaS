@@ -16,10 +16,15 @@ type Learner = {
   seniority: number; clearance: number; pending: boolean;
 };
 type Item = {
-  id: string; module_id: string; type: "mcq" | "true_false" | string; stem: string;
-  options: string[] | null; answer: number | boolean; explanation: string | null;
-  source_doc_ids: string[]; status: string;
+  id: string; module_id: string; type: ItemType; stem: string;
+  options: string[] | null; answer: number | boolean | null; explanation: string | null;
+  source_doc_ids: string[]; status: string; rubric?: string | null;
 };
+type ItemType = "mcq" | "true_false" | "short_answer" | "scenario";
+const ITEM_LABELS: Record<ItemType, string> = {
+  mcq: "Multiple choice", true_false: "True / false", short_answer: "Short answer", scenario: "Scenario",
+};
+const isFreeText = (t: ItemType) => t === "short_answer" || t === "scenario";
 type Module = {
   id: string; position: number; title: string; lesson_md: string;
   source_doc_ids: string[]; status: string; items: Item[];
@@ -362,16 +367,19 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [stem, setStem] = useState(item.stem);
-  const [type, setType] = useState<"mcq" | "true_false">(item.type === "true_false" ? "true_false" : "mcq");
+  const [type, setType] = useState<ItemType>(item.type);
   const [options, setOptions] = useState<string[]>(item.options ?? ["", "", "", ""]);
-  const [answer, setAnswer] = useState<number | boolean>(item.answer);
+  const [answer, setAnswer] = useState<number | boolean>(item.answer ?? 0);
   const [explanation, setExplanation] = useState(item.explanation ?? "");
+  const [rubric, setRubric] = useState(item.rubric ?? "");
   const [error, setError] = useState("");
 
   async function save() {
     setError("");
-    const body = { stem, type, options: type === "mcq" ? options : null,
-                   answer: type === "mcq" ? Number(answer) || 0 : Boolean(answer), explanation };
+    const body = isFreeText(type)
+      ? { stem, type, rubric, explanation }
+      : { stem, type, options: type === "mcq" ? options : null,
+          answer: type === "mcq" ? Number(answer) || 0 : Boolean(answer), explanation };
     const r = await api(`/api/academy/items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) { setError(await readError(r)); return; }
     onSaved(await r.json()); setEditing(false);
@@ -386,7 +394,7 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
     return (
       <li className={`acad-item${item.status === "stale" ? " is-stale" : ""}`}>
         <div className="acad-item-head">
-          <span className="acad-item-type">{item.type === "mcq" ? "Multiple choice" : "True / false"}</span>
+          <span className="acad-item-type">{ITEM_LABELS[item.type] ?? item.type}</span>
           {item.status === "stale" && <StatusBadge status="stale" />}
           <span className="acad-spacer" />
           <button type="button" className="authx-link authx-link-sm" onClick={() => setEditing(true)}>Edit</button>
@@ -397,7 +405,9 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
           <ol className="acad-options">
             {item.options.map((o, i) => <li key={i} className={i === item.answer ? "is-correct" : ""}>{o}{i === item.answer && <span className="sr-only"> (correct)</span>}</li>)}
           </ol>
-        ) : <p className="acad-muted">Answer: <span className="acad-strong">{item.answer ? "True" : "False"}</span></p>}
+        ) : isFreeText(item.type)
+          ? <p className="acad-muted">Graded against: <span className="acad-strong">{item.rubric || "(no rubric yet)"}</span></p>
+          : <p className="acad-muted">Answer: <span className="acad-strong">{item.answer ? "True" : "False"}</span></p>}
         {item.explanation && <p className="acad-muted acad-small">{item.explanation}</p>}
         {error && <p className="authx-error">{error}</p>}
       </li>
@@ -414,12 +424,17 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
         <div className="authx-field">
           <label className="authx-label" htmlFor={`type-${item.id}`}>Type</label>
           <select id={`type-${item.id}`} className="authx-input authx-select" value={type}
-                  onChange={(e) => { const t = e.target.value as "mcq" | "true_false"; setType(t); setAnswer(t === "mcq" ? 0 : true); }}>
-            <option value="mcq">Multiple choice</option><option value="true_false">True / false</option>
+                  onChange={(e) => { const t = e.target.value as ItemType; setType(t); setAnswer(t === "mcq" ? 0 : true); }}>
+            {(Object.keys(ITEM_LABELS) as ItemType[]).map((t) => <option key={t} value={t}>{ITEM_LABELS[t]}</option>)}
           </select>
         </div>
       </div>
-      {type === "mcq" ? (
+      {isFreeText(type) ? (
+        <div className="authx-field">
+          <label className="authx-label" htmlFor={`rubric-${item.id}`}>Rubric <span className="authx-optional">(the points a correct answer must cover)</span></label>
+          <textarea id={`rubric-${item.id}`} className="authx-input acad-textarea" rows={3} value={rubric} onChange={(e) => setRubric(e.target.value)} />
+        </div>
+      ) : type === "mcq" ? (
         <fieldset className="authx-fieldset">
           <legend className="authx-label">Options (select the correct one)</legend>
           {options.map((o, i) => (
