@@ -2,6 +2,7 @@
 // Reuses the .authx-* field/button styles; layout lives in .acad-* (styles.css).
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LearnerView } from "./LearnerView";
+import { ProgressDashboard } from "./ProgressDashboard";
 import { Markdown, Notice, readError } from "./academyShared";
 
 interface Props {
@@ -15,7 +16,7 @@ type Doc = {
 };
 type Learner = {
   uid: string; email: string; role: string | null; department: string | null;
-  seniority: number; clearance: number; pending: boolean;
+  seniority: number; clearance: number; pending: boolean; name: string | null;
 };
 type Item = {
   id: string; module_id: string; type: ItemType; stem: string;
@@ -33,12 +34,13 @@ type Module = {
 };
 type PathT = {
   id: string; title: string; status: string; error: string | null; updated_at: string;
-  rules: { department?: string | null; role?: string | null; clearance?: number; module_count?: number };
+  rules: { department?: string | null; role?: string | null; clearance?: number; module_count?: number; due_days?: number | null };
+  pass_mark: number;
   module_count: number; modules?: Module[] | null;
 };
 
 const LEVELS = ["Public", "Internal", "Restricted"];
-type Section = "kb" | "learners" | "paths" | "learn";
+type Section = "progress" | "kb" | "learners" | "paths" | "learn";
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 function when(iso: string): string {
@@ -185,6 +187,7 @@ function KnowledgeBase({ api, docs, reload }: {
 function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<Response> }) {
   const [list, setList] = useState<Learner[]>([]);
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [dept, setDept] = useState("");
   const [role, setRole] = useState("");
   const [level, setLevel] = useState("1");
@@ -206,12 +209,19 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
     const uid = existing?.uid ?? `email:${email.trim().toLowerCase()}`;
     const r = await api(`/api/academy/learners/${encodeURIComponent(uid)}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), department: dept || null, role: role || null, clearance: Number(level) }),
+      body: JSON.stringify({ email: email.trim(), name: name.trim() || null, department: dept || null,
+                             role: role || null, clearance: Number(level) }),
     });
     setBusy(false);
     if (!r.ok) { setNotice({ kind: "error", text: await readError(r) }); return; }
     setNotice({ kind: "ok", text: `${email.trim()} saved. They're matched when they sign in with that email.` });
-    setEmail(""); setDept(""); setRole(""); load();
+    setEmail(""); setName(""); setDept(""); setRole(""); setLevel("1"); load();
+  }
+
+  function edit(l: Learner) {
+    setEmail(l.email); setName(l.name ?? ""); setDept(l.department ?? ""); setRole(l.role ?? "");
+    setLevel(String(l.clearance)); setNotice(null);
+    document.getElementById("ln-email")?.focus();
   }
 
   async function importCsv() {
@@ -244,6 +254,10 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
             <label className="authx-label" htmlFor="ln-email">Work email</label>
             <input id="ln-email" type="email" className="authx-input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
+          <div className="authx-field">
+            <label className="authx-label" htmlFor="ln-name">Full name <span className="authx-optional">(printed on certificates)</span></label>
+            <input id="ln-name" className="authx-input" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+          </div>
           <div className="acad-grid">
             <div className="authx-field">
               <label className="authx-label" htmlFor="ln-dept">Department</label>
@@ -267,11 +281,11 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
 
         <div className="acad-card">
           <h3 className="acad-h3">Import from CSV</h3>
-          <p className="acad-help">Header row required. Only <code>email</code> is mandatory; clearance is public, internal or restricted.</p>
+          <p className="acad-help">Header row required. Only <code>email</code> is mandatory; <code>name</code> is printed on certificates; clearance is public, internal or restricted.</p>
           <div className="authx-field">
             <label className="authx-label" htmlFor="ln-csv">CSV</label>
             <textarea id="ln-csv" className="authx-input acad-textarea" rows={6} value={csv} onChange={(e) => setCsv(e.target.value)}
-                      placeholder={"email,department,role,clearance\npriya@company.com,sales,sdr,internal"} />
+                      placeholder={"email,name,department,role,clearance\npriya@company.com,Priya Sharma,sales,sdr,internal"} />
           </div>
           <div className="acad-actions">
             <label className="authx-btn authx-btn-secondary acad-file-btn">
@@ -300,11 +314,18 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
               <tbody>
                 {list.map((l) => (
                   <tr key={l.uid}>
-                    <td><span className="acad-strong">{l.email}</span>{l.pending && <span className="acad-pill">Not signed in yet</span>}</td>
+                    <td>
+                      <span className="acad-strong">{l.name || l.email}</span>
+                      {l.pending && <span className="acad-pill">Not signed in yet</span>}
+                      {l.name && <span className="acad-muted acad-small acad-block">{l.email}</span>}
+                    </td>
                     <td className="acad-muted">{l.department ?? "Any"}</td>
                     <td className="acad-muted">{l.role ?? "Any"}</td>
                     <td><span className={`acad-level is-${l.clearance}`}>{LEVELS[l.clearance]}</span></td>
-                    <td className="acad-row-actions"><ConfirmButton label="Remove" confirmLabel="Confirm remove" onConfirm={() => remove(l)} /></td>
+                    <td className="acad-row-actions">
+                      <button type="button" className="authx-link authx-link-sm" onClick={() => edit(l)}>Edit</button>{" "}
+                      <ConfirmButton label="Remove" confirmLabel="Confirm remove" onConfirm={() => remove(l)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -482,7 +503,53 @@ function ModuleEditor({ mod, docTitle, api, onChange }: {
   );
 }
 
-function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promise<Response>; docs: Doc[] }) {
+function PathSettings({ api, path, onSaved }: {
+  api: (path: string, init?: RequestInit) => Promise<Response>; path: PathT; onSaved: (p: PathT) => void;
+}) {
+  const [passMark, setPassMark] = useState(String(Math.round(path.pass_mark * 100)));
+  const [dueDays, setDueDays] = useState(path.rules.due_days ? String(path.rules.due_days) : "");
+  const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const dirty = Number(passMark) !== Math.round(path.pass_mark * 100) || dueDays !== (path.rules.due_days ? String(path.rules.due_days) : "");
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    const r = await api(`/api/academy/paths/${path.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pass_mark: Number(passMark) / 100, due_days: dueDays ? Number(dueDays) : null }),
+    });
+    if (!r.ok) { setMsg({ kind: "error", text: await readError(r) }); return; }
+    onSaved(await r.json());
+    setMsg({ kind: "ok", text: "Saved. Open deadlines moved to match." });
+  }
+
+  return (
+    <form className="acad-settings" onSubmit={save}>
+      <div className="authx-field">
+        <label className="authx-label" htmlFor="ps-pass">Pass mark (%)</label>
+        <input id="ps-pass" type="number" min={50} max={100} step={5} className="authx-input" value={passMark}
+               onChange={(e) => setPassMark(e.target.value)} />
+      </div>
+      <div className="authx-field">
+        <label className="authx-label" htmlFor="ps-due">Finish within <span className="authx-optional">(days, optional)</span></label>
+        <input id="ps-due" type="number" min={1} max={365} className="authx-input" value={dueDays} placeholder="No deadline"
+               onChange={(e) => setDueDays(e.target.value)} aria-describedby="ps-due-hint" />
+      </div>
+      <div className="acad-actions acad-settings-save">
+        <button type="submit" className="authx-btn authx-btn-secondary acad-btn-auto" disabled={!dirty}>Save settings</button>
+      </div>
+      <p className="authx-hint acad-span-all" id="ps-due-hint">
+        Each lesson's test must reach the pass mark. Deadlines count from the day each learner first opens Academy.
+      </p>
+      {msg && <div className="acad-span-all"><Notice kind={msg.kind} onClose={() => setMsg(null)}>{msg.text}</Notice></div>}
+    </form>
+  );
+}
+
+function Paths({ api, docs, focusId, onFocused }: {
+  api: (path: string, init?: RequestInit) => Promise<Response>; docs: Doc[];
+  focusId?: string | null; onFocused?: () => void;
+}) {
   const [paths, setPaths] = useState<PathT[]>([]);
   const [open, setOpen] = useState<PathT | null>(null);
   const [title, setTitle] = useState("");
@@ -509,6 +576,9 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
     const r = await api(`/api/academy/paths/${id}`);
     if (r.ok) setOpen(await r.json());
   }, [api]);
+  useEffect(() => {
+    if (focusId) { openPath(focusId); onFocused?.(); }
+  }, [focusId, openPath, onFocused]);
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -549,7 +619,8 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
   const audience = (p: PathT) => [p.rules.department, p.rules.role].filter(Boolean).join(" · ") || "Everyone";
 
   if (open) {
-    const staleCount = (open.modules ?? []).filter((m) => m.status === "stale").length;
+    const staleCount = (open.modules ?? []).filter((m) => m.status === "stale").length
+      + (open.modules ?? []).flatMap((m) => m.items).filter((i) => i.status === "stale").length;
     return (
       <div className="acad-section">
         <button type="button" className="authx-link" onClick={() => { setOpen(null); load(); }}>← All paths</button>
@@ -568,9 +639,10 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
             <button type="button" className="authx-btn authx-btn-primary acad-btn-auto"
                     disabled={open.status === "published" || staleCount > 0 || !(open.modules?.length)}
                     onClick={() => publish(open)}>
-              {open.status === "published" ? "Published" : staleCount ? `Review ${staleCount} lesson${staleCount > 1 ? "s" : ""} first` : "Publish"}
+              {open.status === "published" ? "Published" : staleCount ? `Review ${staleCount} stale item${staleCount > 1 ? "s" : ""} first` : "Publish"}
             </button>
           </div>
+          <PathSettings api={api} path={open} onSaved={(p) => setOpen({ ...open, ...p, modules: open.modules })} />
         </div>
         {(open.modules ?? []).map((m) => (
           <ModuleEditor key={m.id} mod={m} docTitle={docTitle} api={api} onChange={() => openPath(open.id)} />
@@ -647,7 +719,9 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function AcademyPanel({ apiUrl, authHeaders }: Props) {
-  const [section, setSection] = useState<Section>("kb");
+  const [section, setSection] = useState<Section>("progress");
+  const [focusPath, setFocusPath] = useState<string | null>(null);
+  const clearFocus = useCallback(() => setFocusPath(null), []);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -699,6 +773,7 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
   }
 
   const tabs: { id: Section; label: string }[] = [
+    { id: "progress", label: "Progress" },
     { id: "kb", label: "Knowledge base" }, { id: "learners", label: "Learners" }, { id: "paths", label: "Learning paths" },
     { id: "learn", label: "Learner preview" },
   ];
@@ -715,9 +790,12 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
           ))}
         </div>
       </header>
+      {section === "progress" && (
+        <ProgressDashboard api={api} onOpenPath={(id) => { setFocusPath(id); setSection("paths"); }} />
+      )}
       {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
       {section === "learners" && <Learners api={api} />}
-      {section === "paths" && <Paths api={api} docs={docs} />}
+      {section === "paths" && <Paths api={api} docs={docs} focusId={focusPath} onFocused={clearFocus} />}
       {section === "learn" && <LearnerView api={api} />}
     </div>
   );

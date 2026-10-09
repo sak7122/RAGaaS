@@ -1,8 +1,11 @@
 // Academy learner app (M3): today's plan → lesson → test → graded feedback.
 // Backend: /api/academy/learn/* (answers are only ever revealed after submitting).
 import { FormEvent, Ref, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, CircleCheck, CircleX, Clock, MessageCircleQuestion, Repeat, RotateCcw } from "lucide-react";
-import { Markdown, Notice, readError } from "./academyShared";
+import {
+  ArrowLeft, ArrowRight, Award, CircleCheck, CircleX, Clock, Download, MessageCircleQuestion, Repeat, RotateCcw,
+  TriangleAlert,
+} from "lucide-react";
+import { Markdown, Notice, downloadFile, readError } from "./academyShared";
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
 type Source = { doc_id: string; title: string };
@@ -11,8 +14,9 @@ type ModuleSummary = {
   passed: boolean; best_score: number | null; review_due_at: string | null;
 };
 type LearnPath = {
-  id: string; title: string; pass_mark: number; status: "assigned" | "in_progress" | "passed";
+  id: string; title: string; pass_mark: number; status: "assigned" | "in_progress" | "passed" | "certified";
   score: number | null; modules_total: number; modules_passed: number; modules: ModuleSummary[];
+  due_at: string | null; overdue: boolean; certified_at: string | null;
 };
 type PlanEntry = {
   kind: "review" | "next"; path_id: string; path_title: string;
@@ -42,7 +46,7 @@ type Answer = number | boolean | string;
 const NETWORK_ERROR = "Network error. Check your connection and try again.";
 const LEVELS = ["public", "internal", "restricted"];
 const STATUS_LABEL: Record<LearnPath["status"], string> = {
-  assigned: "Not started", in_progress: "In progress", passed: "Completed",
+  assigned: "Not started", in_progress: "In progress", passed: "Completed", certified: "Certified",
 };
 const isFreeText = (t: ItemType) => t === "short_answer" || t === "scenario";
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -133,7 +137,13 @@ export function LearnerView({ api }: { api: Api }) {
         )}
       </section>
 
-      {plan.paths.map((p) => <PathCard key={p.id} path={p} onOpen={setModuleId} />)}
+      {plan.paths.map((p) => (
+        <PathCard key={p.id} path={p} onOpen={setModuleId} preview={plan.preview}
+                  onCertificate={async () => {
+                    const err = await downloadFile(api, `/api/academy/learn/paths/${p.id}/certificate`, "certificate.pdf");
+                    if (err) setError(err);
+                  }} />
+      ))}
 
       {!plan.preview && (
         <p className="acad-help">
@@ -145,13 +155,21 @@ export function LearnerView({ api }: { api: Api }) {
   );
 }
 
-function PathCard({ path, onOpen }: { path: LearnPath; onOpen: (id: string) => void }) {
+function PathCard({ path, onOpen, onCertificate, preview }: {
+  path: LearnPath; onOpen: (id: string) => void; onCertificate: () => void; preview: boolean;
+}) {
   const share = path.modules_total ? path.modules_passed / path.modules_total : 0;
+  const done = path.status === "passed" || path.status === "certified";
   return (
     <section className="acad-card" aria-label={path.title}>
       <div className="learn-card-head">
         <h3 className="acad-h3">{path.title}</h3>
-        <span className={`acad-badge${path.status === "passed" ? " is-published" : ""}`}>{STATUS_LABEL[path.status]}</span>
+        <span className={`acad-badge${done ? " is-published" : ""}`}>{STATUS_LABEL[path.status]}</span>
+        {path.overdue ? (
+          <span className="dash-overdue"><TriangleAlert size={14} aria-hidden="true" /> Overdue since {day(path.due_at!)}</span>
+        ) : path.due_at && !done ? (
+          <span className="acad-muted acad-small">Due {day(path.due_at)}</span>
+        ) : null}
         <span className="acad-spacer" />
         <span className="acad-muted acad-small">
           {path.modules_passed} of {path.modules_total} lessons{path.score !== null ? ` · score ${pct(path.score)}` : ""}
@@ -161,6 +179,21 @@ function PathCard({ path, onOpen }: { path: LearnPath; onOpen: (id: string) => v
            aria-valuemin={0} aria-valuemax={path.modules_total} aria-valuenow={path.modules_passed}>
         <span style={{ width: `${share * 100}%` }} />
       </div>
+      {path.status === "certified" && (
+        <div className="learn-cert">
+          <Award size={18} aria-hidden="true" />
+          <span className="learn-task-main">
+            <span className="acad-strong">You're certified</span>
+            <span className="acad-muted acad-small">Signed off {day(path.certified_at!)}</span>
+          </span>
+          <button type="button" className="authx-btn authx-btn-secondary acad-btn-auto" onClick={onCertificate}>
+            <Download size={14} aria-hidden="true" /> Certificate
+          </button>
+        </div>
+      )}
+      {path.status === "passed" && !preview && (
+        <p className="acad-help">All lessons passed. Your manager signs off next, then your certificate appears here.</p>
+      )}
       <ol className="learn-modules">
         {path.modules.map((m) => (
           <li key={m.id}>

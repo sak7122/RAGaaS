@@ -50,6 +50,7 @@ class Learner:
     department: str | None = None
     seniority: int = 1
     clearance: int = INTERNAL
+    name: str | None = None
 
     def entitlement(self) -> Entitlement:
         return Entitlement(self.clearance, self.department, self.role)
@@ -120,10 +121,23 @@ class Assignment:
     tenant_id: str
     learner_uid: str
     path_id: str
-    status: str = "in_progress"   # in_progress | passed
+    status: str = "assigned"      # assigned | in_progress | passed | certified
     score: float | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    assigned_at: str | None = None
+    due_at: str | None = None
+    certified_at: str | None = None
+    certified_by: str | None = None
+
+
+@dataclass
+class KnowledgeGap:
+    """A question the knowledge base couldn't answer: tells admins what to document."""
+    tenant_id: str
+    learner_uid: str
+    question: str
+    created_at: str = ""
 
 
 @dataclass
@@ -200,15 +214,20 @@ class AcademyStore(Protocol):
     def list_items(self, tenant_id: str, module_ids: list[str]) -> list[Item]: ...
     # learner progress (M3)
     def get_assignment(self, tenant_id: str, uid: str, path_id: str) -> Assignment | None: ...
+    def list_assignments(self, tenant_id: str, uid: str | None = None) -> list[Assignment]: ...
     def upsert_assignment(self, a: Assignment) -> None: ...
     def add_attempts(self, attempts: list[Attempt]) -> None: ...
+    def list_attempt_scores(self, tenant_id: str) -> list[tuple[str, float]]: ...
     def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None: ...
-    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]: ...
+    def list_progress(self, tenant_id: str, uid: str | None = None) -> list[ModuleProgress]: ...
     def upsert_progress(self, p: ModuleProgress) -> None: ...
     def get_review(self, tenant_id: str, uid: str, module_id: str) -> ReviewEntry | None: ...
     def list_reviews(self, tenant_id: str, uid: str) -> list[ReviewEntry]: ...
     def upsert_review(self, r: ReviewEntry) -> None: ...
     def delete_review(self, tenant_id: str, uid: str, module_id: str) -> None: ...
+    # dashboards (M4)
+    def add_gap(self, gap: KnowledgeGap) -> None: ...
+    def list_gaps(self, tenant_id: str, limit: int = 500) -> list[KnowledgeGap]: ...
 
 
 def new_id() -> str:
@@ -242,6 +261,7 @@ class MemoryAcademyStore:
             self.attempts: list[Attempt] = []
             self.progress: dict[tuple[str, str, str], ModuleProgress] = {}  # (tenant, uid, module)
             self.reviews: dict[tuple[str, str, str], ReviewEntry] = {}      # (tenant, uid, module)
+            self.gaps: list[KnowledgeGap] = []
 
     # tenants / files / audit
     def ensure_tenant(self, tenant_id: str, name: str) -> None:
@@ -445,6 +465,11 @@ class MemoryAcademyStore:
             a = self.assignments.get((tenant_id, uid, path_id))
             return copy.deepcopy(a) if a else None
 
+    def list_assignments(self, tenant_id: str, uid: str | None = None) -> list[Assignment]:
+        with self._lock:
+            return [copy.deepcopy(a) for k, a in self.assignments.items()
+                    if k[0] == tenant_id and (uid is None or k[1] == uid)]
+
     def upsert_assignment(self, a: Assignment) -> None:
         with self._lock:
             self.assignments[(a.tenant_id, a.learner_uid, a.path_id)] = copy.deepcopy(a)
@@ -453,14 +478,19 @@ class MemoryAcademyStore:
         with self._lock:
             self.attempts.extend(copy.deepcopy(a) for a in attempts)
 
+    def list_attempt_scores(self, tenant_id: str) -> list[tuple[str, float]]:
+        with self._lock:
+            return [(a.item_id, a.score) for a in self.attempts if a.tenant_id == tenant_id]
+
     def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None:
         with self._lock:
             p = self.progress.get((tenant_id, uid, module_id))
             return copy.deepcopy(p) if p else None
 
-    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]:
+    def list_progress(self, tenant_id: str, uid: str | None = None) -> list[ModuleProgress]:
         with self._lock:
-            return [copy.deepcopy(p) for k, p in self.progress.items() if k[:2] == (tenant_id, uid)]
+            return [copy.deepcopy(p) for k, p in self.progress.items()
+                    if k[0] == tenant_id and (uid is None or k[1] == uid)]
 
     def upsert_progress(self, p: ModuleProgress) -> None:
         with self._lock:
@@ -484,6 +514,17 @@ class MemoryAcademyStore:
         with self._lock:
             self.reviews.pop((tenant_id, uid, module_id), None)
 
+    # dashboards (M4)
+    def add_gap(self, gap: KnowledgeGap) -> None:
+        with self._lock:
+            gap.created_at = gap.created_at or now_iso()
+            self.gaps.append(copy.deepcopy(gap))
+
+    def list_gaps(self, tenant_id: str, limit: int = 500) -> list[KnowledgeGap]:
+        with self._lock:
+            rows = [copy.deepcopy(g) for g in self.gaps if g.tenant_id == tenant_id]
+            return sorted(rows, key=lambda g: g.created_at, reverse=True)[:limit]
+
 
 # ── Supabase (prod) ───────────────────────────────────────────────────────────
 def _row(obj: Any, *drop: str) -> dict:
@@ -497,12 +538,14 @@ class SupabaseAcademyStore:
     BUCKET = "kb"
     DOC_COLS = ("id,tenant_id,title,storage_path,sensitivity,dept_tags,role_tags,"
                 "owner_email,updated_at,version,content_hash")
-    LEARNER_COLS = "uid,tenant_id,email,role,department,seniority,clearance"
+    LEARNER_COLS = "uid,tenant_id,email,role,department,seniority,clearance,name"
     PATH_COLS = "id,tenant_id,title,rules,pass_mark,status,error,created_at,updated_at"
     MODULE_COLS = "id,tenant_id,path_id,position,title,lesson_md,source_doc_ids,status"
     ITEM_COLS = ("id,tenant_id,module_id,type,stem,options,answer,explanation,"
                  "source_doc_ids,difficulty,status,rubric")
-    ASSIGN_COLS = "tenant_id,learner_uid,path_id,status,score,started_at,completed_at"
+    ASSIGN_COLS = ("tenant_id,learner_uid,path_id,status,score,started_at,completed_at,"
+                   "assigned_at,due_at,certified_at,certified_by")
+    GAP_COLS = "tenant_id,learner_uid,question,created_at"
     PROGRESS_COLS = ("tenant_id,learner_uid,module_id,path_id,best_score,last_score,passed,"
                      "attempts,completed_at,updated_at")
     REVIEW_COLS = "tenant_id,learner_uid,module_id,due_at,interval_days"
@@ -715,6 +758,10 @@ class SupabaseAcademyStore:
                          learner_uid=f"eq.{uid}", path_id=f"eq.{path_id}")
         return self._assignment(rows[0]) if rows else None
 
+    def list_assignments(self, tenant_id: str, uid: str | None = None) -> list[Assignment]:
+        filters = {"tenant_id": f"eq.{tenant_id}"} | ({"learner_uid": f"eq.{uid}"} if uid else {})
+        return [self._assignment(r) for r in self._get("assignments", self.ASSIGN_COLS, **filters)]
+
     def upsert_assignment(self, a: Assignment) -> None:
         self._rest("POST", "assignments", params={"on_conflict": "learner_uid,path_id"},
                    json=_row(a), headers=self._UPSERT)
@@ -723,15 +770,19 @@ class SupabaseAcademyStore:
         if attempts:
             self._rest("POST", "attempts", json=[_row(a) for a in attempts])
 
+    def list_attempt_scores(self, tenant_id: str) -> list[tuple[str, float]]:
+        rows = self._get("attempts", "item_id,score", tenant_id=f"eq.{tenant_id}",
+                         order="created_at.desc", limit="5000")
+        return [(r["item_id"], float(r["score"])) for r in rows]
+
     def get_progress(self, tenant_id: str, uid: str, module_id: str) -> ModuleProgress | None:
         rows = self._get("module_progress", self.PROGRESS_COLS, tenant_id=f"eq.{tenant_id}",
                          learner_uid=f"eq.{uid}", module_id=f"eq.{module_id}")
         return self._progress(rows[0]) if rows else None
 
-    def list_progress(self, tenant_id: str, uid: str) -> list[ModuleProgress]:
-        rows = self._get("module_progress", self.PROGRESS_COLS, tenant_id=f"eq.{tenant_id}",
-                         learner_uid=f"eq.{uid}")
-        return [self._progress(r) for r in rows]
+    def list_progress(self, tenant_id: str, uid: str | None = None) -> list[ModuleProgress]:
+        filters = {"tenant_id": f"eq.{tenant_id}"} | ({"learner_uid": f"eq.{uid}"} if uid else {})
+        return [self._progress(r) for r in self._get("module_progress", self.PROGRESS_COLS, **filters)]
 
     def upsert_progress(self, p: ModuleProgress) -> None:
         body = _row(p)
@@ -757,6 +808,18 @@ class SupabaseAcademyStore:
         self._rest("DELETE", "review_queue", params={"tenant_id": f"eq.{tenant_id}",
                                                      "learner_uid": f"eq.{uid}",
                                                      "module_id": f"eq.{module_id}"})
+
+    # dashboards (M4)
+    def add_gap(self, gap: KnowledgeGap) -> None:
+        try:
+            self._rest("POST", "kb_gaps", json=_row(gap, "created_at"))
+        except Exception as exc:  # gap logging must never break an answer
+            log.warning("gap write failed: %s", exc)
+
+    def list_gaps(self, tenant_id: str, limit: int = 500) -> list[KnowledgeGap]:
+        rows = self._get("kb_gaps", self.GAP_COLS, tenant_id=f"eq.{tenant_id}",
+                         order="created_at.desc", limit=str(limit))
+        return [KnowledgeGap(**r) for r in rows]
 
 
 def create_academy_store() -> AcademyStore:

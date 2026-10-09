@@ -507,6 +507,7 @@ app.include_router(create_academy_router(
     require_role=require_role,
     enforce_quota=enforce_quota,
     max_upload_bytes=MAX_UPLOAD_BYTES,
+    tenant_name=lambda t: tenant_profile_store.get_name(t) or prettify(t),
 ))
 
 

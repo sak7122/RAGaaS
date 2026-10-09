@@ -93,3 +93,22 @@ export function Markdown({ text }: { text: string }) {
     </div>
   );
 }
+
+// Authenticated download (certificates sit behind a bearer token, so a plain link won't do).
+export async function downloadFile(
+  api: (path: string, init?: RequestInit) => Promise<Response>, path: string, fallbackName: string,
+): Promise<string | null> {
+  const r = await api(path);
+  if (!r.ok) return readError(r);
+  const blob = await r.blob();
+  const match = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") ?? "");
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = match?.[1] ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return null;
+}

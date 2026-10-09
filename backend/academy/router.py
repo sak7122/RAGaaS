@@ -7,29 +7,35 @@ M2: learning-path generation (topics → lessons → quiz items) with review,
     editing and publishing.
 M3: learner app — today's plan, lessons, graded tests (exact + rubric-graded
     free text), progress, spaced review.
+M4: admin dashboard (funnel, learner progress, hardest questions, knowledge
+    gaps, stale queue), path settings with due windows, sign-off, certificates.
 
 No `from __future__ import annotations` here: FastAPI must resolve the local
 AuthDep alias at definition time, and string annotations would hide it.
 """
 import csv
 import hashlib
+import statistics
 import io
 import logging
 import math
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePath
 from typing import Annotated, Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from backend.academy.certificate import certificate_id, render_certificate
 from backend.academy.course import CourseGenerator
 from backend.academy.search import KnowledgeSearch, doc_permitted
 from backend.academy.grading import FREE_TEXT, FreeTextGrader, create_free_text_grader, grade_item
 from backend.academy.store import (
     ADMIN_ENTITLEMENT, PENDING_PREFIX, PUBLIC, RESTRICTED, AcademyStore, Assignment, Attempt,
-    Entitlement, Item, KbDocument, Learner, Module, ModuleProgress, Path, ReviewEntry, new_id,
+    Entitlement, Item, KbDocument, KnowledgeGap, Learner, Module, ModuleProgress, Path, ReviewEntry,
+    new_id,
 )
 from backend.firebase_services import Principal
 
@@ -47,6 +53,9 @@ GENERATION_TIMEOUT = timedelta(minutes=10)
 PLAN_MINUTES = 30          # "today's plan" budget (PRD §8: 2-3 modules, ~30 min)
 PLAN_MAX_NEW = 3
 REVIEW_STEPS = (1, 3, 7)   # spaced-review intervals in days (PRD §6.2)
+HARDEST_MIN_ATTEMPTS = 3   # a question needs this many answers before it's ranked
+HARDEST_LIMIT = 8
+GAPS_LIMIT = 15
 _TAG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
@@ -67,6 +76,7 @@ class AcademyDocOut(BaseModel):
 
 class LearnerIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
+    name: str | None = Field(default=None, max_length=120)
     role: str | None = Field(default=None, max_length=40)
     department: str | None = Field(default=None, max_length=40)
     seniority: int = Field(default=1, ge=1, le=5)
@@ -81,6 +91,7 @@ class LearnerOut(BaseModel):
     seniority: int
     clearance: int
     pending: bool
+    name: str | None = None
 
 
 class AskIn(BaseModel):
@@ -107,6 +118,13 @@ class PathIn(BaseModel):
     clearance: int = Field(default=1, ge=0, le=2)
     module_count: int = Field(default=4, ge=1, le=8)
     questions_per_module: int = Field(default=4, ge=2, le=8)
+    due_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class PathSettingsIn(BaseModel):
+    title: str | None = Field(default=None, min_length=2, max_length=120)
+    pass_mark: float | None = Field(default=None, ge=0.5, le=1.0)
+    due_days: int | None = Field(default=None, ge=1, le=365)   # send null to remove the deadline
 
 
 class ItemOut(BaseModel):
@@ -195,11 +213,14 @@ class LearnPathOut(BaseModel):
     id: str
     title: str
     pass_mark: float
-    status: Literal["assigned", "in_progress", "passed"]
+    status: Literal["assigned", "in_progress", "passed", "certified"]
     score: float | None
     modules_total: int
     modules_passed: int
     modules: list[LearnModuleSummary]
+    due_at: str | None = None
+    overdue: bool = False
+    certified_at: str | None = None
 
 
 class LearnModuleOut(BaseModel):
@@ -269,6 +290,100 @@ class SubmitOut(BaseModel):
     path: LearnPathOut
 
 
+# ── Dashboard & certification models (M4) ───────────────────────────────────
+class DashTotals(BaseModel):
+    learners: int
+    not_signed_in: int
+    assignments: int
+    in_progress: int
+    completed: int
+    awaiting_signoff: int
+    certified: int
+    overdue: int
+
+
+class DashPath(BaseModel):
+    id: str
+    title: str
+    status: str
+    pass_mark: float
+    due_days: int | None
+    lessons: int
+    eligible: int
+    started: int
+    passed: int          # includes certified
+    certified: int
+    overdue: int
+    avg_score: float | None
+    median_days_to_ready: float | None
+
+
+class DashLearnerPath(BaseModel):
+    path_id: str
+    title: str
+    status: Literal["assigned", "in_progress", "passed", "certified"]
+    score: float | None
+    modules_passed: int
+    modules_total: int
+    assigned_at: str | None
+    due_at: str | None
+    overdue: bool
+    completed_at: str | None
+    certified_at: str | None
+    weak_modules: list[str]          # lessons attempted but not yet passed
+
+
+class DashLearner(BaseModel):
+    uid: str
+    email: str
+    name: str | None
+    department: str | None
+    role: str | None
+    pending: bool
+    last_active: str | None
+    paths: list[DashLearnerPath]
+
+
+class DashItem(BaseModel):
+    item_id: str
+    stem: str
+    type: str
+    module_title: str
+    path_id: str
+    path_title: str
+    attempts: int
+    avg_score: float
+
+
+class DashGap(BaseModel):
+    question: str
+    count: int
+    last_asked: str
+
+
+class DashStale(BaseModel):
+    path_id: str
+    title: str
+    status: str
+    stale_lessons: int
+    stale_questions: int
+
+
+class DashboardOut(BaseModel):
+    totals: DashTotals
+    paths: list[DashPath]
+    learners: list[DashLearner]
+    hardest: list[DashItem]
+    gaps: list[DashGap]
+    stale: list[DashStale]
+
+
+class CertifyOut(BaseModel):
+    ok: bool
+    certified_at: str
+    certificate_id: str
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -297,7 +412,7 @@ def _doc_out(d: KbDocument, **extra: Any) -> AcademyDocOut:
 
 def _learner_out(lr: Learner) -> LearnerOut:
     return LearnerOut(uid=lr.uid, email=lr.email, role=lr.role, department=lr.department,
-                      seniority=lr.seniority, clearance=lr.clearance, pending=lr.pending)
+                      seniority=lr.seniority, clearance=lr.clearance, pending=lr.pending, name=lr.name)
 
 
 def _item_out(i: Item) -> ItemOut:
@@ -327,7 +442,7 @@ def validate_item_edit(body: ItemEdit) -> tuple[list[str] | None, int | bool | N
 
 
 def parse_learners_csv(text: str) -> tuple[list[dict], list[dict]]:
-    """CSV columns (header row required): email, department, role, clearance, seniority.
+    """CSV columns (header row required): email, name, department, role, clearance, seniority.
     Only email is required. Returns (rows, errors)."""
     reader = csv.DictReader(io.StringIO(text.lstrip("﻿")))
     if not reader.fieldnames or "email" not in [f.strip().lower() for f in reader.fieldnames]:
@@ -355,7 +470,10 @@ def parse_learners_csv(text: str) -> tuple[list[dict], list[dict]]:
             dept, role = _clean_tag(r.get("department")), _clean_tag(r.get("role"))
         except HTTPException as exc:
             errors.append({"line": n, "message": str(exc.detail)}); continue
-        rows.append({"email": email, "department": dept, "role": role,
+        name = r.get("name", "")
+        if len(name) > 120:
+            errors.append({"line": n, "message": "name must be at most 120 characters"}); continue
+        rows.append({"email": email, "name": name or None, "department": dept, "role": role,
                      "clearance": clearance, "seniority": seniority})
     return rows, errors
 
@@ -369,11 +487,13 @@ def create_academy_router(
     enforce_quota: Callable[[str], int],
     max_upload_bytes: int,
     grader: FreeTextGrader | None = None,
+    tenant_name: Callable[[str], str] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/academy", tags=["academy"])
     AuthDep = Annotated[Principal, Depends(auth)]
     generator = CourseGenerator(search)
     free_text_grader = grader or create_free_text_grader()
+    company_name = tenant_name or (lambda t: t)
 
     def learner_for(principal: Principal) -> Learner | None:
         learner = store.get_learner(principal.tenant_id, principal.uid)
@@ -529,6 +649,7 @@ def create_academy_router(
             uid=uid, tenant_id=principal.tenant_id, email=body.email.strip().lower(),
             role=_clean_tag(body.role), department=_clean_tag(body.department),
             seniority=body.seniority, clearance=body.clearance,
+            name=(body.name or "").strip() or None,
         ))
         store.audit(principal.tenant_id, principal.uid, f"learner.upsert:{uid}")
         return {"ok": True, "uid": uid}
@@ -572,6 +693,16 @@ def create_academy_router(
                 "is_admin": principal.role == "admin",
                 "clearance": ent.clearance, "department": ent.department, "role": ent.role}
 
+    def is_knowledge_gap(tenant_id: str, question: str, ent: Entitlement) -> bool:
+        """Unanswered for this learner AND for full access: a doc the learner isn't
+        cleared for is an access question, not missing documentation."""
+        if ent.unrestricted:
+            return True
+        try:
+            return not search.answer(tenant_id, question, ADMIN_ENTITLEMENT).grounded
+        except Exception:
+            return False
+
     @router.post("/ask", response_model=AskOut)
     def ask(body: AskIn, principal: AuthDep) -> AskOut:
         tenant_id = principal.tenant_id
@@ -584,6 +715,8 @@ def create_academy_router(
             log.error("academy ask failed tenant=%s: %s", tenant_id, exc)
             raise HTTPException(status_code=502, detail="Knowledge search unavailable") from exc
         store.audit(tenant_id, principal.uid, "kb.ask", model="vertex-ai-search-answer")
+        if not result.grounded and is_knowledge_gap(tenant_id, body.question, ent):
+            store.add_gap(KnowledgeGap(tenant_id, principal.uid, body.question.strip()[:500]))
         return AskOut(answer=result.answer, grounded=result.grounded,
                       citations=[CitationOut(**c.__dict__) for c in result.citations])
 
@@ -606,7 +739,7 @@ def create_academy_router(
         path = Path(id=new_id(), tenant_id=tenant_id, title=body.title.strip(), status="generating",
                     rules={"department": audience.department, "role": audience.role,
                            "clearance": audience.clearance, "module_count": body.module_count,
-                           "questions_per_module": body.questions_per_module})
+                           "questions_per_module": body.questions_per_module, "due_days": body.due_days})
         store.create_path(path)
         try:
             drafts = generator.build(tenant_id, audience, docs, body.module_count, body.questions_per_module)
@@ -739,11 +872,17 @@ def create_academy_router(
                 and (not r.get("role") or r["role"] == ent.role)
                 and int(r.get("clearance", RESTRICTED)) <= ent.clearance)
 
+    def published_content(mods: list[Module], items: list[Item]) -> ModuleSet:
+        return [(m, [i for i in items if i.module_id == m.id and i.status == "published"])
+                for m in mods if m.status == "published"]
+
+    def visible_to(content: ModuleSet, ent: Entitlement, docs: dict[str, KbDocument]) -> ModuleSet:
+        return [(m, items) for m, items in content
+                if all(d in docs and doc_permitted(docs[d], ent) for d in m.source_doc_ids)]
+
     def learnable_modules(p: Path, ent: Entitlement, docs: dict[str, KbDocument]) -> ModuleSet:
-        mods = [m for m in store.list_modules(p.tenant_id, p.id) if m.status == "published"
-                and all(d in docs and doc_permitted(docs[d], ent) for d in m.source_doc_ids)]
-        items = store.list_items(p.tenant_id, [m.id for m in mods])
-        return [(m, [i for i in items if i.module_id == m.id and i.status == "published"]) for m in mods]
+        mods = [m for m in store.list_modules(p.tenant_id, p.id) if m.status == "published"]
+        return visible_to(published_content(mods, store.list_items(p.tenant_id, [m.id for m in mods])), ent, docs)
 
     def est_minutes(m: Module, items: list[Item]) -> int:
         return max(2, math.ceil(len(m.lesson_md.split()) / 200) + len(items))
@@ -770,7 +909,7 @@ def create_academy_router(
                 {r.module_id: r for r in store.list_reviews(t, uid)})
 
     def summarize(p: Path, mods: ModuleSet, progress: dict[str, ModuleProgress],
-                  reviews: dict[str, ReviewEntry]) -> LearnPathOut:
+                  reviews: dict[str, ReviewEntry], assignment: Assignment | None = None) -> LearnPathOut:
         summaries = []
         for m, items in mods:
             pr, rv = progress.get(m.id), reviews.get(m.id)
@@ -782,11 +921,17 @@ def create_academy_router(
         passed = sum(s.passed for s in summaries)
         status = "passed" if summaries and passed == len(summaries) else \
             "in_progress" if attempted else "assigned"
+        if assignment and assignment.status == "certified":
+            status = "certified"
         score = round(sum(pr.best_score for pr in attempted) / len(mods), 3) \
             if mods and len(attempted) == len(mods) else None
+        due_at = assignment.due_at if assignment else None
+        overdue = bool(due_at and status in ("assigned", "in_progress")
+                       and _parse_ts(due_at) < datetime.now(timezone.utc))
         return LearnPathOut(id=p.id, title=p.title, pass_mark=float(p.pass_mark), status=status,
                             score=score, modules_total=len(summaries), modules_passed=passed,
-                            modules=summaries)
+                            modules=summaries, due_at=due_at, overdue=overdue,
+                            certified_at=assignment.certified_at if assignment else None)
 
     def visible_paths(tenant_id: str, ent: Entitlement, docs: dict[str, KbDocument]
                       ) -> list[tuple[Path, ModuleSet]]:
@@ -822,12 +967,29 @@ def create_academy_router(
         store.upsert_learner(Learner(uid=uid, tenant_id=t, email=email, clearance=PUBLIC))
         store.audit(t, uid, "learner.self_registered")
 
+    def assignments_for(principal: Principal, paths: list[Path], now: datetime) -> dict[str, Assignment]:
+        """A path is assigned the first time it applies to a learner who opens Academy;
+        that is when its due window starts."""
+        t, uid = principal.tenant_id, principal.uid
+        existing = {a.path_id: a for a in store.list_assignments(t, uid)} if paths else {}
+        missing = [p for p in paths if p.id not in existing]
+        if missing:
+            ensure_learner_row(principal)
+            for p in missing:
+                days = (p.rules or {}).get("due_days")
+                a = Assignment(t, uid, p.id, assigned_at=now.isoformat(),
+                               due_at=(now + timedelta(days=int(days))).isoformat() if days else None)
+                store.upsert_assignment(a)
+                existing[p.id] = a
+        return existing
+
     @router.get("/learn/plan", response_model=PlanOut)
     def learn_plan(principal: AuthDep) -> PlanOut:
         ent, preview, docs = learn_context(principal)
         progress, reviews = progress_maps(principal, preview)
         paths = visible_paths(principal.tenant_id, ent, docs)
         now = datetime.now(timezone.utc)
+        assignments = {} if preview else assignments_for(principal, [p for p, _ in paths], now)
         due, upcoming = [], []
         for p, mods in paths:
             for m, items in mods:
@@ -845,7 +1007,7 @@ def create_academy_router(
             today.append(e)
             minutes += e.est_minutes
         return PlanOut(preview=preview, clearance=ent.clearance, department=ent.department, role=ent.role,
-                       paths=[summarize(p, mods, progress, reviews) for p, mods in paths],
+                       paths=[summarize(p, mods, progress, reviews, assignments.get(p.id)) for p, mods in paths],
                        today=today, today_minutes=minutes, reviews_due=len(due))
 
     @router.get("/learn/paths/{path_id}", response_model=LearnPathOut)
@@ -856,7 +1018,8 @@ def create_academy_router(
         if not p or not mods:
             raise HTTPException(status_code=404, detail="Path not found")
         progress, reviews = progress_maps(principal, preview)
-        return summarize(p, mods, progress, reviews)
+        assignment = None if preview else store.get_assignment(principal.tenant_id, principal.uid, p.id)
+        return summarize(p, mods, progress, reviews, assignment)
 
     @router.get("/learn/modules/{module_id}", response_model=LearnModuleOut)
     def learn_module(module_id: str, principal: AuthDep) -> LearnModuleOut:
@@ -934,14 +1097,16 @@ def create_academy_router(
             else:
                 reviews.pop(m.id, None)
 
-            summary = summarize(p, mods, progress, reviews)
-            prev_a = store.get_assignment(t, uid, p.id)
-            done = summary.status == "passed"
-            store.upsert_assignment(Assignment(
-                t, uid, p.id, status="passed" if done else "in_progress", score=summary.score,
-                started_at=prev_a.started_at if prev_a and prev_a.started_at else now_s,
-                completed_at=(prev_a.completed_at if prev_a and prev_a.completed_at
-                              else (now_s if done else None))))
+            prev_a = store.get_assignment(t, uid, p.id) or Assignment(t, uid, p.id, assigned_at=now_s)
+            base = summarize(p, mods, progress, reviews)
+            done = base.status == "passed"
+            assignment = replace(
+                prev_a, score=base.score,
+                status="certified" if prev_a.status == "certified" else ("passed" if done else "in_progress"),
+                started_at=prev_a.started_at or now_s,
+                completed_at=prev_a.completed_at or (now_s if done else None))
+            store.upsert_assignment(assignment)
+            summary = summarize(p, mods, progress, reviews, assignment)
             store.audit(t, uid, f"learn.submit:{m.id}:{score}")
         else:
             summary = summarize(p, mods, progress, reviews)
@@ -956,5 +1121,171 @@ def create_academy_router(
                 correct_answer=None if it.type in FREE_TEXT else it.answer,
                 model_answer=it.rubric if it.type in FREE_TEXT else None,
                 sources=sources_out(it.source_doc_ids, docs, ent)) for it, g in grades])
+
+    # ── Path settings, sign-off, certificates, dashboard (M4) ─────────────────
+    @router.patch("/paths/{path_id}", response_model=PathOut)
+    def update_path_settings(path_id: str, body: PathSettingsIn, principal: AuthDep) -> PathOut:
+        require_role(principal, "admin")
+        t = principal.tenant_id
+        p = owned_path(t, path_id)
+        sent = body.model_fields_set
+        if "title" in sent and body.title is not None:
+            p.title = body.title.strip()
+        if "pass_mark" in sent and body.pass_mark is not None:
+            p.pass_mark = round(body.pass_mark, 3)
+        if "due_days" in sent:
+            p.rules = {**(p.rules or {}), "due_days": body.due_days}
+            for a in store.list_assignments(t):      # open assignments follow the new window
+                if a.path_id == p.id and a.status in ("assigned", "in_progress") and a.assigned_at:
+                    a.due_at = ((_parse_ts(a.assigned_at) + timedelta(days=body.due_days)).isoformat()
+                                if body.due_days else None)
+                    store.upsert_assignment(a)
+        store.update_path(p)
+        store.audit(t, principal.uid, f"path.settings:{path_id}")
+        return path_out(p)
+
+    @router.post("/paths/{path_id}/learners/{uid}/certify", response_model=CertifyOut)
+    def certify(path_id: str, uid: str, principal: AuthDep) -> CertifyOut:
+        """Manager sign-off: a learner who passed every lesson becomes certified."""
+        require_role(principal, "admin")
+        t = principal.tenant_id
+        owned_path(t, path_id)
+        a = store.get_assignment(t, uid, path_id)
+        if not a or a.status not in ("passed", "certified"):
+            raise HTTPException(status_code=409, detail="Only a learner who has passed every lesson can be signed off")
+        if a.status != "certified":
+            a.status, a.certified_at = "certified", datetime.now(timezone.utc).isoformat()
+            a.certified_by = principal.email or principal.uid
+            store.upsert_assignment(a)
+            store.audit(t, principal.uid, f"path.certify:{path_id}:{uid}")
+        return CertifyOut(ok=True, certified_at=str(a.certified_at),
+                          certificate_id=certificate_id(t, uid, path_id, str(a.certified_at)))
+
+    def certificate_response(t: str, uid: str, path_id: str) -> Response:
+        p = store.get_path(t, path_id)
+        a = store.get_assignment(t, uid, path_id)
+        if not p or not a or a.status != "certified" or not a.certified_at:
+            raise HTTPException(status_code=404, detail="Certificate not found")
+        lr = store.get_learner(t, uid)
+        pdf = render_certificate(
+            company=company_name(t), learner=(lr.name or lr.email) if lr else uid, path_title=p.title,
+            score=a.score, completed_at=a.completed_at, certified_at=str(a.certified_at),
+            certified_by=a.certified_by, cert_id=certificate_id(t, uid, path_id, str(a.certified_at)))
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", p.title).strip("-")[:60] or "path"
+        return Response(pdf, media_type="application/pdf", headers={
+            "Content-Disposition": f'attachment; filename="{slug}-certificate.pdf"', "Cache-Control": "no-store"})
+
+    @router.get("/learn/paths/{path_id}/certificate")
+    def my_certificate(path_id: str, principal: AuthDep) -> Response:
+        require_enabled(principal.tenant_id)
+        return certificate_response(principal.tenant_id, principal.uid, path_id)
+
+    @router.get("/paths/{path_id}/learners/{uid}/certificate")
+    def learner_certificate(path_id: str, uid: str, principal: AuthDep) -> Response:
+        require_role(principal, "admin")
+        return certificate_response(principal.tenant_id, uid, path_id)
+
+    @router.get("/dashboard", response_model=DashboardOut)
+    def dashboard(principal: AuthDep) -> DashboardOut:
+        require_role(principal, "admin")
+        t = principal.tenant_id
+        docs = {d.id: d for d in store.list_documents(t)}
+        progress_by: dict[str, dict[str, ModuleProgress]] = {}
+        for pr in store.list_progress(t):
+            progress_by.setdefault(pr.learner_uid, {})[pr.module_id] = pr
+        assignment_by = {(a.learner_uid, a.path_id): a for a in store.list_assignments(t)}
+
+        # One read per path; learners are then matched in memory.
+        content_by_path: dict[str, tuple[Path, ModuleSet]] = {}
+        item_index: dict[str, tuple[Item, Module | None, Path]] = {}
+        stale: list[DashStale] = []
+        for p in sorted(store.list_paths(t), key=lambda p: str(p.created_at)):
+            if p.status in ("generating", "failed"):
+                continue
+            mods = store.list_modules(t, p.id)
+            items = store.list_items(t, [m.id for m in mods])
+            by_id = {m.id: m for m in mods}
+            item_index.update({i.id: (i, by_id.get(i.module_id), p) for i in items})
+            stale_l, stale_q = sum(m.status == "stale" for m in mods), sum(i.status == "stale" for i in items)
+            if stale_l or stale_q:
+                stale.append(DashStale(path_id=p.id, title=p.title, status=p.status,
+                                       stale_lessons=stale_l, stale_questions=stale_q))
+            content = published_content(mods, items)
+            if content:
+                content_by_path[p.id] = (p, content)
+
+        funnel = {pid: {"eligible": 0, "started": 0, "passed": 0, "certified": 0, "overdue": 0,
+                        "scores": [], "days": []} for pid in content_by_path}
+        learners_out: list[DashLearner] = []
+        for lr in sorted(store.list_learners(t), key=lambda lr: lr.email):
+            ent, prog = lr.entitlement(), progress_by.get(lr.uid, {})
+            rows = []
+            for pid, (p, content) in content_by_path.items():
+                mods = visible_to(content, ent, docs) if path_assigned(p, ent) else []
+                if not mods:
+                    continue
+                a = assignment_by.get((lr.uid, pid))
+                sm = summarize(p, mods, prog, {}, a)
+                f = funnel[pid]
+                f["eligible"] += 1
+                f["started"] += sm.status != "assigned"
+                f["certified"] += sm.status == "certified"
+                f["overdue"] += sm.overdue
+                if sm.status in ("passed", "certified"):
+                    f["passed"] += 1
+                    if sm.score is not None:
+                        f["scores"].append(sm.score)
+                    start = a and (a.assigned_at or a.started_at)
+                    if start and a.completed_at:
+                        f["days"].append((_parse_ts(a.completed_at) - _parse_ts(start)).total_seconds() / 86400)
+                rows.append(DashLearnerPath(
+                    path_id=pid, title=p.title, status=sm.status, score=sm.score,
+                    modules_passed=sm.modules_passed, modules_total=sm.modules_total,
+                    assigned_at=a.assigned_at if a else None, due_at=sm.due_at, overdue=sm.overdue,
+                    completed_at=a.completed_at if a else None, certified_at=sm.certified_at,
+                    weak_modules=[m.title for m, _ in mods if m.id in prog and not prog[m.id].passed]))
+            last = max((str(pr.updated_at) for pr in prog.values() if pr.updated_at), default=None)
+            learners_out.append(DashLearner(
+                uid=lr.uid, email=lr.email, name=lr.name, department=lr.department, role=lr.role,
+                pending=lr.pending, last_active=last, paths=rows))
+
+        paths_out = [DashPath(
+            id=pid, title=p.title, status=p.status, pass_mark=float(p.pass_mark),
+            due_days=(p.rules or {}).get("due_days"), lessons=len(content),
+            eligible=f["eligible"], started=f["started"], passed=f["passed"], certified=f["certified"],
+            overdue=f["overdue"], avg_score=round(statistics.mean(f["scores"]), 3) if f["scores"] else None,
+            median_days_to_ready=round(statistics.median(f["days"]), 1) if f["days"] else None)
+            for pid, (p, content) in content_by_path.items() for f in [funnel[pid]]]
+
+        agg: dict[str, list[float]] = {}
+        for item_id, score in store.list_attempt_scores(t):
+            if item_id in item_index:
+                agg.setdefault(item_id, []).append(score)
+        ranked = sorted(((iid, len(v), sum(v) / len(v)) for iid, v in agg.items()
+                         if len(v) >= HARDEST_MIN_ATTEMPTS and sum(v) / len(v) < 1.0),
+                        key=lambda x: (x[2], -x[1]))[:HARDEST_LIMIT]
+        hardest = [DashItem(item_id=iid, stem=it.stem, type=it.type, module_title=mod.title if mod else "",
+                            path_id=p.id, path_title=p.title, attempts=n, avg_score=round(avg, 3))
+                   for iid, n, avg in ranked for it, mod, p in [item_index[iid]]]
+
+        groups: dict[str, DashGap] = {}
+        for g in store.list_gaps(t):                 # newest first: keep the latest phrasing
+            key = " ".join(re.findall(r"[a-z0-9]+", g.question.lower()))
+            if key in groups:
+                groups[key].count += 1
+            elif key:
+                groups[key] = DashGap(question=g.question, count=1, last_asked=str(g.created_at))
+        gaps = sorted(groups.values(), key=lambda gp: (gp.count, gp.last_asked), reverse=True)[:GAPS_LIMIT]
+
+        totals = DashTotals(
+            learners=len(learners_out), not_signed_in=sum(lr.pending for lr in learners_out),
+            assignments=sum(f["eligible"] for f in funnel.values()),
+            in_progress=sum(f["started"] - f["passed"] for f in funnel.values()),
+            completed=sum(f["passed"] for f in funnel.values()),
+            awaiting_signoff=sum(f["passed"] - f["certified"] for f in funnel.values()),
+            certified=sum(f["certified"] for f in funnel.values()),
+            overdue=sum(f["overdue"] for f in funnel.values()))
+        return DashboardOut(totals=totals, paths=paths_out, learners=learners_out,
+                            hardest=hardest, gaps=gaps, stale=stale)
 
     return router
