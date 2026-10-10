@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "design-proto",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5180", "--bind", "127.0.0.1", "--directory", "design/proto"],
+      "port": 5180
+    }
+  ]
+}

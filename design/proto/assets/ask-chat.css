@@ -1,0 +1,90 @@
+/* Ask page: document scope button, picker sheet and selected-document tray. */
+.main{position:relative}
+
+/* scope button in the chat bar */
+.scope-btn{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 12px 0 8px;border-radius:9999px;border:1px solid var(--hair);background:#fff;color:var(--ink);font:500 13px/1 var(--font);cursor:pointer;transition:transform .16s var(--ease),border-color .15s ease,background-color .15s ease}
+@media (hover:hover) and (pointer:fine){.scope-btn:hover{border-color:rgba(0,0,0,.2)}}
+.scope-btn:active{transform:scale(.97)}
+.scope-btn[aria-expanded="true"]{background:var(--parch)}
+.scope-btn[aria-expanded="true"] .scope-chev{transform:rotate(180deg)}
+.scope-chev{transition:transform .2s var(--ease)}
+.scope-btn:focus-visible,.dcard-hit:focus-visible,.dq:focus-visible,.linkbtn:focus-visible,.tchip button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.scope-stack{display:inline-flex}
+.scope-stack i{width:16px;height:20px;border-radius:4px;border:1.5px solid #fff;margin-left:-6px;display:grid;place-items:center;font:700 7px/1 var(--font);color:#fff;font-style:normal}
+.scope-stack i:first-child{margin-left:0}
+
+/* file-type colours, used by the stack, cards and tray */
+.ft-pdf{background:#d93025}.ft-docx{background:#1a5fb4}.ft-all{background:#1d1d1f}
+
+/* picker sheet: drops in under the chat bar */
+.picker{position:absolute;inset:56px 0 0 0;z-index:5;display:flex;flex-direction:column;background:rgba(255,255,255,.96);backdrop-filter:saturate(180%) blur(16px);-webkit-backdrop-filter:saturate(180%) blur(16px);
+  opacity:0;transform:translateY(-8px);transition:opacity .15s var(--ease),transform .15s var(--ease)}
+.picker.is-open{opacity:1;transform:none;transition:opacity .22s var(--ease),transform .26s var(--ease)}
+.picker[hidden]{display:none}
+.picker-head{display:flex;flex-direction:column;gap:12px;padding:18px 22px 12px;border-bottom:1px solid var(--hair)}
+.picker-count{font-size:13px;color:var(--muted)}
+.picker-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pfield{flex:1 1 220px;display:flex;align-items:center;gap:8px;min-height:40px;padding:0 14px;border-radius:9999px;background:var(--parch);color:var(--muted);transition:box-shadow .15s ease}
+.pfield:focus-within{box-shadow:0 0 0 2px var(--blue)}
+.pfield input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:400 15px/1.3 var(--font);color:var(--ink)}
+.linkbtn{min-height:40px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--blue);font:500 14px/1 var(--font);cursor:pointer;transition:background-color .15s ease}
+.linkbtn:hover{background:rgba(0,102,204,.06)}
+.picker-grid{flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding:16px 22px 20px;align-content:start}
+.picker-empty{margin:0;padding:24px;text-align:center;color:var(--muted)}
+.picker-foot{display:flex;align-items:center;gap:12px;padding:12px 22px;border-top:1px solid var(--hair);background:#fff}
+
+/* a document card: the whole card toggles selection; its question chips ask directly */
+.dcard{position:relative;display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;background:#fff;box-shadow:0 0 0 1px var(--hair);
+  transition:box-shadow .2s ease,transform .25s var(--ease),background-color .2s ease}
+.picker.is-open .dcard{animation:cardIn .35s var(--ease) both;animation-delay:calc(var(--i,0) * 25ms)}
+@keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (hover:hover) and (pointer:fine){.dcard:hover{box-shadow:0 0 0 1px rgba(0,0,0,.18),0 10px 24px -16px rgba(0,0,0,.35)}}
+.dcard:has(.dcard-hit:active){transform:scale(.98)}
+.dcard[hidden]{display:none}
+.dcard.is-on{background:#f5f9ff;box-shadow:0 0 0 2px var(--blue)}
+.dcard-hit{position:absolute;inset:0;z-index:1;border:0;border-radius:inherit;background:transparent;cursor:pointer}
+.dtop{display:flex;align-items:flex-start;gap:10px;padding-right:28px}
+.ftype{flex:none;width:30px;height:36px;border-radius:6px;display:grid;place-items:center;color:#fff;font:700 9px/1 var(--font);letter-spacing:.02em}
+.dname{margin:0;font-weight:600;font-size:15px;line-height:1.3;color:var(--ink)}
+.dmeta{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.dsum{margin:0;font-size:13px;line-height:1.45;color:#424245;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dqs{display:flex;flex-direction:column;gap:6px;margin-top:auto}
+.dqs-label{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.02em;text-transform:uppercase}
+.dq{position:relative;z-index:2;display:flex;align-items:center;gap:6px;width:100%;min-height:32px;padding:4px 10px;border-radius:10px;border:0;background:var(--parch);color:var(--ink);font:400 12.5px/1.3 var(--font);text-align:left;cursor:pointer;transition:background-color .15s ease,transform .16s var(--ease)}
+.dq:hover{background:#e8e8ed}
+.dq:active{transform:scale(.98)}
+.dq span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dq svg{flex:none;color:var(--blue);opacity:0;transform:translateX(-3px);transition:opacity .15s ease,transform .2s var(--ease)}
+@media (hover:hover) and (pointer:fine){.dq:hover svg{opacity:1;transform:none}}
+.dmore{font-size:12px;color:var(--muted)}
+.dcheck{position:absolute;top:14px;right:14px;width:22px;height:22px;border-radius:50%;border:1.5px solid #c7c7cc;background:#fff;display:grid;place-items:center;color:#fff;transition:background-color .15s ease,border-color .15s ease}
+.dcheck svg{opacity:0;transform:scale(.6);transition:opacity .15s var(--ease),transform .25s var(--ease)}
+.dcard.is-on .dcheck{background:var(--blue);border-color:var(--blue)}
+.dcard.is-on .dcheck svg{opacity:1;transform:none}
+
+/* selected-document tray above the suggestions */
+.tray{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.tray:empty{display:none}
+.tchip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 4px 0 6px;border-radius:9999px;background:var(--parch);color:var(--ink);font-size:12.5px;animation:pop .25s var(--ease) both}
+.tchip.leaving{animation:none;opacity:0;transform:scale(.94);transition:opacity .12s ease,transform .12s ease}
+.tchip i{width:12px;height:15px;border-radius:3px;flex:none}
+.tchip button{width:22px;height:22px;border:0;border-radius:50%;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer}
+.tchip button:hover{background:#e8e8ed;color:var(--ink)}
+.tall{padding:0 10px}
+
+/* scope note under a question */
+.scope-note{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}
+.live-note{margin:0;font-size:13px;color:var(--muted)}
+.live-note b{color:var(--ink)}
+
+@media (max-width:860px){
+  .scope-btn #scope-label{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar .role{display:none}
+  .picker-head,.picker-grid,.picker-foot{padding-left:14px;padding-right:14px}
+  .picker-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  .picker,.picker.is-open{transform:none!important}
+  .picker.is-open .dcard,.tchip{animation:none!important}
+  .dcard,.dcard-hit,.dq{transform:none!important}
+}

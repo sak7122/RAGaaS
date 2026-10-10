@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access · RAGaaS</title>
+<link rel="stylesheet" href="assets/base.css">
+<style>
+.hero{padding:104px 0 112px;overflow:hidden}
+.segs{position:relative;display:inline-grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:3px;border-radius:9999px;background:#1d1d1f}
+.seg-thumb{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px) / 3);border-radius:9999px;background:#3a3a3c;transition:transform .3s var(--ease)}
+.seg{position:relative;z-index:1;min-height:44px;min-width:120px;padding:0 18px;border:0;background:transparent;border-radius:9999px;font:500 15px/1 var(--font);color:#a1a1a6;cursor:pointer;transition:color .2s ease}
+.seg[aria-pressed="true"]{color:#f5f5f7}
+.grid8{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.doc{position:relative;border-radius:18px;padding:20px;min-height:168px;display:flex;flex-direction:column;gap:8px;background:#1d1d1f;border:1px solid #2c2c2e;overflow:hidden;
+  transition:opacity .35s var(--ease),transform .4s var(--ease),filter .35s var(--ease),border-color .3s ease}
+.doc.locked{opacity:.38;transform:scale(.96);filter:grayscale(1)}
+.doc .st{margin-top:auto;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+.doc .ok{color:var(--green)}.doc .no{color:var(--muted-d)}
+.doc .flash{position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1.5px var(--blue-d);opacity:0;pointer-events:none}
+.doc.changed .flash{animation:flash .7s var(--ease)}
+@keyframes flash{0%{opacity:1}100%{opacity:0}}
+.counter{font-variant-numeric:tabular-nums;font-size:15px;color:var(--muted-d)}
+.counter b{color:#f5f5f7;display:inline-block;min-width:1ch;transition:transform .25s var(--ease)}
+/* check-before-search scrub */
+.cbs{position:relative;height:300vh}
+.cbs-pin{position:sticky;top:0;height:100vh;display:flex;align-items:center}
+.cbs-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:64px;align-items:center;width:100%}
+.phase{padding:14px 0;opacity:.3;transition:opacity .35s ease}
+.phase.is-on{opacity:1}
+.lab{position:relative;border-radius:26px;background:#fff;box-shadow:0 0 0 1px var(--hair);padding:28px;overflow:hidden;min-height:440px}
+.lab-docs{position:relative;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:64px}
+.ld{border-radius:14px;padding:14px;min-height:84px;background:var(--parch);font-size:14px;font-weight:500;display:flex;flex-direction:column;gap:6px;will-change:transform,opacity}
+.ld small{font-weight:400;color:var(--muted);font-size:12px}
+.ld.hit{box-shadow:0 0 0 2px var(--blue)}
+.filter{position:absolute;left:20px;right:20px;top:24px;height:44px;border-radius:12px;background:rgba(255,159,10,.12);border:1.5px solid var(--orange);display:flex;align-items:center;gap:8px;padding:0 14px;font-size:13px;font-weight:600;color:#9a5b00;will-change:transform}
+.sweep{position:absolute;top:96px;bottom:24px;width:3px;left:0;border-radius:2px;background:var(--blue);box-shadow:0 0 18px 4px rgba(0,102,204,.35);opacity:0;will-change:transform,opacity}
+.lab-ans{position:absolute;left:20px;right:20px;bottom:20px;border-radius:16px;background:var(--ink);color:#f5f5f7;padding:16px 18px;display:flex;flex-direction:column;gap:8px;opacity:0;transform:translateY(16px);will-change:transform,opacity}
+/* applies everywhere */
+.where{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.wh{border-radius:22px;padding:28px;min-height:220px;display:flex;flex-direction:column;gap:10px;transition:transform .35s var(--ease)}
+@media (hover:hover) and (pointer:fine){.wh:hover{transform:translateY(-4px)}}
+.wh-ico{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;margin-bottom:6px}
+@media (max-width:860px){
+  .grid8{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .seg{min-width:0;padding:0 12px;font-size:14px}
+  .cbs{height:auto}.cbs-pin{position:relative;height:auto;padding:88px 0}
+  .cbs-grid{grid-template-columns:minmax(0,1fr);gap:28px}
+  .phase{opacity:1}
+  .where{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+}
+@media (max-width:520px){.where{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){
+  .doc,.seg-thumb{transition:opacity .2s ease!important}
+  .doc.locked{transform:none}
+  .doc.changed .flash{animation:none}
+}
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="index.html" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="ask.html">Ask</a>
+<a class="navlink" href="gaps.html">Gaps</a>
+<a class="navlink" href="academy.html">Academy</a>
+<a class="navlink" href="access.html" aria-current="page">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="#signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="#start">Start free</a>
+</div>
+</header>
+
+<main>
+<section class="hero dark">
+<div class="wide" style="display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:28px">
+<div style="display:flex;flex-direction:column;gap:18px;max-width:640px">
+<p class="eyebrow" data-reveal>Access</p>
+<h1 class="h1" data-split>Restricted stays restricted.</h1>
+<p class="lede" data-reveal style="transition-delay:.3s">Tag each document with who it's for. Everyone gets answers only from what they're cleared to read, in chat, lessons and tests.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px;align-items:flex-start;transition-delay:.4s" data-reveal>
+<div role="group" aria-label="View as" class="segs" id="segs">
+<span class="seg-thumb" id="thumb" aria-hidden="true"></span>
+<button type="button" class="seg" aria-pressed="true" data-r="sales">Sales hire</button>
+<button type="button" class="seg" aria-pressed="false" data-r="eng">Engineer</button>
+<button type="button" class="seg" aria-pressed="false" data-r="hr">HR lead</button>
+</div>
+<p class="counter" aria-live="polite"><b id="cnt">0</b> of 8 documents searchable for this person</p>
+</div>
+</div>
+<div class="grid8" id="grid" data-stagger></div>
+</div>
+</section>
+
+<section class="cbs parch" id="cbs">
+<div class="cbs-pin">
+<div class="wide cbs-grid">
+<div style="display:flex;flex-direction:column;gap:8px">
+<p class="eyebrow">Check before search</p>
+<h2 class="h2" style="margin-bottom:14px">The filter runs first.</h2>
+<div class="phase"><p class="h3" style="font-size:22px">1 · Filter by role</p><p class="body">Documents the person isn't cleared for are removed before anything is searched.</p></div>
+<div class="phase"><p class="h3" style="font-size:22px">2 · Search what's left</p><p class="body">Only the remaining documents are matched against the question.</p></div>
+<div class="phase"><p class="h3" style="font-size:22px">3 · Answer from those</p><p class="body">The answer can't quote what was never read, and gaps don't count a question someone just isn't cleared for.</p></div>
+</div>
+<div class="lab" id="lab" aria-hidden="true">
+<div class="filter" id="filter"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Sales hire · access filter</div>
+<div class="lab-docs" id="labdocs">
+<div class="ld">Company handbook<small>Everyone</small></div>
+<div class="ld hitme">Sales playbook<small>Sales team</small></div>
+<div class="ld cut">Deploy runbook<small>Engineering</small></div>
+<div class="ld">Pricing sheet<small>Sales team</small></div>
+<div class="ld cut">Payroll bands<small>Restricted</small></div>
+<div class="ld">CRM guide<small>Sales team</small></div>
+</div>
+<span class="sweep" id="sweep"></span>
+<div class="lab-ans" id="labans"><span style="font-size:13px;color:var(--muted-d)">Can I offer 20% off an annual plan?</span><span style="font-size:15px">Only with the sales director's approval.</span><span class="chip" style="align-self:flex-start;background:#1d1d1f;border-color:#424245;color:var(--blue-d)">Sales playbook, p. 4</span></div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec" style="background:#fff">
+<div class="wide" style="display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:16px;max-width:640px">
+<p class="eyebrow" data-reveal>Everywhere</p>
+<h2 class="h2" data-split>One rule, applied to everything.</h2>
+</div>
+<div class="where" data-stagger>
+<div class="wh dark"><span class="wh-ico" style="background:#1d1d1f"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2997ff" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg></span><p class="h3" style="font-size:22px">Answers</p><p class="body">Chat only searches cleared documents.</p></div>
+<div class="wh parch"><span class="wh-ico" style="background:#fff"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0066cc" stroke-width="2" aria-hidden="true"><path d="M3 9l9-5 9 5-9 5z"/><path d="M7 11v5c3 2 7 2 10 0v-5"/></svg></span><p class="h3" style="font-size:22px">Lessons</p><p class="body">Paths are built only from what the role can read.</p></div>
+<div class="wh tile-d"><span class="wh-ico" style="background:#1d1d1f"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2997ff" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg></span><p class="h3" style="font-size:22px">Tests</p><p class="body">No question is drawn from a restricted page.</p></div>
+<div class="wh parch"><span class="wh-ico" style="background:#fff"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0066cc" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg></span><p class="h3" style="font-size:22px">Gaps</p><p class="body">"Not cleared" is never counted as "not answered".</p></div>
+</div>
+</div>
+</section>
+
+<section id="start" class="dark sec cta">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Share the handbook. Keep the payroll private.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Each workspace is isolated, and your documents are never used to train a model.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="ask.html#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="index.html">Back to overview</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span style="flex:1"></span><a href="access.html">Privacy</a><a href="#start">Contact</a></div></footer>
+
+<script>
+// Document grid is data; build it before motion.js wires the stagger.
+const DOCS = [
+  ['Company handbook', 'Everyone', 'sales eng hr'], ['Sales playbook', 'Sales team', 'sales'], ['Pricing sheet', 'Sales team', 'sales'],
+  ['Deploy runbook', 'Engineering', 'eng'], ['Incident playbook', 'Engineering', 'eng'], ['Benefits overview', 'Everyone', 'sales eng hr'],
+  ['Payroll bands', 'HR only', 'hr'], ['Board minutes', 'Restricted clearance', ''],
+];
+const grid = document.getElementById('grid');
+DOCS.forEach(([t, who, allow]) => {
+  const d = document.createElement('div'); d.className = 'doc'; d.dataset.allow = allow;
+  d.innerHTML = '<span class="flash"></span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f5f5f7" stroke-width="1.6" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg><p style="margin:0;font-weight:600;font-size:17px"></p><p class="body" style="font-size:14px"></p><span class="st"></span>';
+  d.children[2].textContent = t; d.children[3].textContent = who; grid.appendChild(d);
+});
+</script>
+<script src="assets/motion.js"></script>
+<script>
+const RAG = window.RAG;
+const LOCK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+const OK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+const segs = [...document.querySelectorAll('#segs .seg')], thumb = document.getElementById('thumb'), cnt = document.getElementById('cnt');
+const docs = [...grid.children];
+let shown = 0;
+const countTo = (n) => {
+  const from = shown; shown = n; const t0 = performance.now();
+  if (RAG.reduce) { cnt.textContent = n; return; }
+  const step = (now) => { const p = Math.min(1, (now - t0) / 400); cnt.textContent = Math.round(from + (n - from) * p); if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+};
+const setRole = (r, i, first) => {
+  segs.forEach((s, j) => s.setAttribute('aria-pressed', i === j));
+  thumb.style.transform = `translateX(${i * 100}%)`;
+  let n = 0;
+  docs.forEach((d, j) => {
+    const ok = d.dataset.allow.split(' ').includes(r); if (ok) n++;
+    const changed = d.classList.contains('locked') === ok;
+    d.style.transitionDelay = first ? '' : `${j * 40}ms`;
+    d.classList.toggle('locked', !ok);
+    const st = d.querySelector('.st'); st.className = 'st ' + (ok ? 'ok' : 'no'); st.innerHTML = (ok ? OK : LOCK) + (ok ? 'Can answer' : 'Never searched');
+    if (changed && !first) { d.classList.remove('changed'); void d.offsetWidth; d.classList.add('changed'); }
+  });
+  countTo(n);
+};
+segs.forEach((b, i) => b.onclick = () => setRole(b.dataset.r, i));
+setRole('sales', 0, true);
+
+/* ---------- check before search, scrubbed ---------- */
+const phases = [...document.querySelectorAll('.phase')];
+const filter = document.getElementById('filter'), sweep = document.getElementById('sweep'), ans = document.getElementById('labans');
+const lab = document.getElementById('lab'), lds = [...document.querySelectorAll('.ld')];
+const draw = (p) => {
+  const ph = p < 0.34 ? 0 : p < 0.67 ? 1 : 2;
+  phases.forEach((x, j) => x.classList.toggle('is-on', j === ph));
+  const a = RAG.smooth(0.05, 0.3, p), b = RAG.smooth(0.38, 0.62, p), c = RAG.smooth(0.7, 0.85, p);
+  const h = lab.clientHeight;
+  filter.style.transform = `translate3d(0, ${(a * (h - 200)).toFixed(1)}px, 0)`;
+  filter.style.opacity = (1 - RAG.smooth(0.3, 0.38, p)).toFixed(3);
+  lds.forEach((d) => {
+    if (d.classList.contains('cut')) { d.style.opacity = (1 - 0.85 * a).toFixed(3); d.style.transform = `scale(${(1 - 0.08 * a).toFixed(3)})`; }
+    if (d.classList.contains('hitme')) d.classList.toggle('hit', b > 0.55);
+  });
+  sweep.style.opacity = (b > 0 && b < 1 ? 1 : 0);
+  sweep.style.transform = `translate3d(${(20 + b * (lab.clientWidth - 40)).toFixed(1)}px,0,0)`;
+  ans.style.opacity = c.toFixed(3);
+  ans.style.transform = `translate3d(0, ${(16 * (1 - c)).toFixed(1)}px, 0)`;
+};
+if (RAG.reduce || matchMedia('(max-width: 860px)').matches) {
+  // no pin: show the end state, phases all readable
+  draw(1); phases.forEach((x) => x.classList.add('is-on'));
+} else RAG.scrub(document.getElementById('cbs'), draw);
+</script>
+</body>
+</html>

@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask · RAGaaS</title>
+<link rel="stylesheet" href="assets/base.css">
+<link rel="stylesheet" href="assets/ask-chat.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<style>
+body{background:#000}
+/* ---------- hero ---------- */
+.flight{position:relative;height:440vh;background:#000}
+.stage{position:sticky;top:0;height:100vh;overflow:hidden}
+.scene{position:absolute;inset:0;width:100%;height:100%}
+.vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 50% 40%,transparent 55%,rgba(0,0,0,.7) 100%)}
+.cap{position:absolute;left:max(24px,calc((100vw - 1192px) / 2));bottom:13vh;max-width:520px;display:flex;flex-direction:column;gap:14px;color:#f5f5f7;
+  opacity:0;transform:translateY(14px);filter:blur(4px);transition:opacity .2s var(--ease),transform .2s var(--ease),filter .2s var(--ease);pointer-events:none}
+.cap.is-on{opacity:1;transform:none;filter:blur(0);pointer-events:auto;transition:opacity .5s var(--ease) .08s,transform .6s var(--ease) .08s,filter .5s var(--ease) .08s}
+.cap .body{color:var(--muted-d);font-size:19px}
+.cap.glass{background:rgba(0,0,0,.58);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);padding:24px 26px;border-radius:22px;border:1px solid rgba(255,255,255,.08)}
+.cap.glass .h2{font-size:clamp(28px,3.4vw,44px)}
+.cap .eyebrow{color:var(--blue-d)}
+.hud{position:absolute;top:76px;left:50%;transform:translateX(-50%);display:grid;place-items:center}
+.hud-i{grid-area:1/1;display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 16px;border-radius:9999px;background:rgba(29,29,31,.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.1);color:#f5f5f7;font-size:14px;white-space:nowrap;
+  opacity:0;transform:translateY(-6px) scale(.97);transition:opacity .15s var(--ease),transform .15s var(--ease)}
+.hud-i.is-on{opacity:1;transform:none;transition:opacity .35s var(--ease) .1s,transform .4s var(--ease) .1s}
+.hud-dot{width:8px;height:8px;border-radius:50%;background:var(--blue-d);box-shadow:0 0 0 4px rgba(41,151,255,.18)}
+.hud-i.warn .hud-dot{background:var(--orange);box-shadow:0 0 0 4px rgba(255,159,10,.18)}
+.rail{position:absolute;right:max(20px,calc((100vw - 1192px) / 2));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:10px}
+.dot{width:6px;height:6px;border-radius:3px;background:rgba(255,255,255,.28);transform-origin:50% 0;transition:background-color .3s ease,transform .35s var(--ease)}
+.dot.is-on{background:var(--blue-d);transform:scaleY(3.2)}
+.dot.is-past{background:rgba(255,255,255,.6)}
+.hint{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px;color:var(--muted-d);transition:opacity .3s ease}
+.hint svg{animation:nudge 1.8s var(--ease-io) infinite}
+@keyframes nudge{0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}}
+/* labels pinned to the 3D scene */
+.tag{position:absolute;left:0;top:0;opacity:0;pointer-events:none;will-change:transform,opacity}
+.tag-in{display:inline-flex;align-items:center;gap:8px;min-height:30px;padding:0 12px 0 6px;border-radius:9999px;background:rgba(29,29,31,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);color:#f5f5f7;font-size:13px;white-space:nowrap;margin-bottom:8px}
+.tag-rank{width:20px;height:20px;border-radius:50%;background:#3a3a3c;display:inline-grid;place-items:center;font-size:12px;font-weight:600}
+.tag.r1 .tag-rank{background:var(--blue)}
+.tag-page{color:var(--muted-d)}
+.tag-dive{display:none;color:var(--blue-d);font-weight:600}
+.tag.is-diving .tag-dive{display:inline}
+.tag.is-diving .tag-in{padding:0 14px 0 6px;min-height:36px;font-size:15px;border-color:rgba(41,151,255,.5)}
+.tag.plain .tag-in{padding:0 12px}
+.tag.warn .tag-in{color:var(--orange);border-color:rgba(255,159,10,.4)}
+.answer-card{position:absolute;right:max(24px,calc((100vw - 1192px) / 2 + 40px));bottom:13vh;width:min(380px,calc(100vw - 48px));
+  background:rgba(29,29,31,.74);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:20px;color:#f5f5f7;display:flex;flex-direction:column;gap:12px;
+  opacity:0;transform:translateY(12px) scale(.97);transition:opacity .2s var(--ease),transform .2s var(--ease);pointer-events:none}
+.answer-card.is-on{opacity:1;transform:none;pointer-events:auto;transition:opacity .45s var(--ease) .3s,transform .5s var(--ease) .3s}
+.fallback{position:absolute;inset:0;display:none;background:radial-gradient(80% 60% at 50% 30%,#0b1a33,#000)}
+.no-webgl .fallback{display:block}
+
+/* ---------- chat app ---------- */
+.app{position:relative;display:grid;grid-template-columns:240px minmax(0,1fr);height:680px;background:#fff;border-radius:20px;overflow:hidden}
+.side{background:var(--parch);border-right:1px solid var(--hair);padding:16px 12px;display:flex;flex-direction:column;gap:4px}
+.recent{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:0 10px;border:0;border-radius:8px;background:transparent;font:400 14px/1.2 var(--font);color:var(--ink);text-align:left;cursor:pointer;transition:background-color .15s ease}
+.recent:hover{background:rgba(0,0,0,.04)}
+.recent.is-on{background:#fff;box-shadow:0 0 0 1px var(--hair)}
+.main{display:flex;flex-direction:column;min-width:0}
+.bar{display:flex;align-items:center;gap:12px;min-height:56px;padding:0 20px;border-bottom:1px solid var(--hair)}
+.role{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);background:var(--parch);border-radius:9999px;padding:6px 12px}
+.thread{flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:14px}
+.msg{display:flex;flex-direction:column;gap:8px;animation:msgIn .35s var(--ease) both}
+@keyframes msgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.msg.is-user{align-items:flex-end}
+.u{max-width:72%;background:var(--blue);color:#fff;padding:10px 14px;border-radius:18px 18px 4px 18px;font-size:16px;line-height:1.4}
+.r{max-width:80%;background:var(--parch);padding:12px 16px;border-radius:18px 18px 18px 4px;font-size:16px;line-height:1.5}
+.thinking{display:inline-flex;gap:4px;padding:16px}
+.thinking i{width:6px;height:6px;border-radius:50%;background:#86868b;animation:think 1s var(--ease-io) infinite}
+.thinking i:nth-child(2){animation-delay:.12s}.thinking i:nth-child(3){animation-delay:.24s}
+@keyframes think{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+.caret{display:inline-block;width:2px;height:1em;background:var(--ink);vertical-align:-2px;margin-left:2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.cite-btn{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border-radius:9999px;border:1px solid var(--hair);background:#fff;color:var(--blue);font:600 13px/1 var(--font);cursor:pointer;animation:pop .3s var(--ease) both;transition:transform .16s var(--ease),border-color .15s ease}
+.cite-btn:hover{border-color:rgba(0,102,204,.4)}
+.cite-btn:active{transform:scale(.97)}
+@keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+.gap-tag{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#1d1d1f;background:#fff4d6;border-radius:9999px;padding:7px 12px;animation:pop .3s var(--ease) both}
+.composer{border-top:1px solid var(--hair);padding:14px 20px 18px;display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chipq{min-height:36px;padding:0 14px;border-radius:9999px;border:1px solid var(--hair);background:#fff;color:var(--ink);font:400 14px/1.2 var(--font);cursor:pointer;transition:transform .16s var(--ease),border-color .15s ease,opacity .2s ease}
+.chipq:hover{border-color:rgba(0,0,0,.2)}
+.chipq:active{transform:scale(.97)}
+.chipq:disabled{opacity:.45;cursor:default}
+.field{display:flex;align-items:center;gap:8px;min-height:48px;padding:4px 4px 4px 18px;border-radius:9999px;border:1px solid rgba(0,0,0,.12);background:#fff;transition:border-color .15s ease,box-shadow .2s ease}
+.field:focus-within{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,102,204,.15)}
+.input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:400 16px/1.4 var(--font);color:var(--ink)}
+.send{width:40px;height:40px;flex:none;border-radius:50%;border:0;background:var(--blue);color:#fff;display:inline-grid;place-items:center;cursor:pointer;transition:transform .16s var(--ease),opacity .15s ease}
+.send:active{transform:scale(.94)}
+.send:disabled{opacity:.35;cursor:default}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:min(400px,100%);background:#fff;border-left:1px solid var(--hair);box-shadow:-12px 0 32px -16px rgba(0,0,0,.18);padding:20px 24px;display:flex;flex-direction:column;gap:16px;
+  transform:translateX(100%);visibility:hidden;transition:transform .2s var(--ease),visibility 0s linear .2s}
+.drawer.is-open{transform:none;visibility:visible;transition:transform .45s var(--ease-drawer),visibility 0s}
+.icon-btn{width:36px;height:36px;border-radius:50%;border:0;background:var(--parch);display:inline-grid;place-items:center;cursor:pointer;color:var(--ink);transition:transform .16s var(--ease)}
+.icon-btn:active{transform:scale(.94)}
+.excerpt{font-family:var(--serif);font-size:18px;line-height:1.65;color:#333336;margin:0}
+.hl{background-image:linear-gradient(rgba(0,102,204,.16),rgba(0,102,204,.16));background-repeat:no-repeat;background-size:0% 100%;border-radius:3px;padding:1px 2px;-webkit-box-decoration-break:clone;box-decoration-break:clone;transition:background-size .15s var(--ease)}
+.drawer.is-open .hl{background-size:100% 100%;transition:background-size .8s var(--ease) .35s}
+
+/* ---------- pipeline scrollytelling ---------- */
+.pipe{position:relative;height:300vh}
+.pipe-pin{position:sticky;top:0;height:100vh;display:flex;align-items:center}
+.pipe-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:64px;align-items:center;width:100%}
+.stages{display:flex;flex-direction:column;gap:6px}
+.stg{display:grid;grid-template-columns:40px minmax(0,1fr);gap:16px;padding:18px 0;opacity:.35;transition:opacity .35s ease}
+.stg.is-on{opacity:1}
+.stg-n{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;border:1.5px solid #424245;font-weight:600;font-size:15px;transition:background-color .3s ease,border-color .3s ease,color .3s ease}
+.stg.is-on .stg-n{background:var(--blue-d);border-color:var(--blue-d);color:#000}
+.stg.is-past .stg-n{border-color:var(--blue-d);color:var(--blue-d)}
+.board{position:relative;aspect-ratio:1.05;border-radius:28px;background:#0b0b0d;box-shadow:0 0 0 1px #1f1f22;overflow:hidden}
+.board svg{position:absolute;inset:0;width:100%;height:100%}
+.node{position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;transform:translate(-50%,-50%);font-size:13px;color:var(--muted-d);text-align:center;transition:color .3s ease}
+.node-box{min-width:120px;padding:12px 14px;border-radius:14px;background:#1d1d1f;border:1px solid #2c2c2e;color:#f5f5f7;font-size:14px;transition:border-color .3s ease,box-shadow .3s ease,transform .4s var(--ease)}
+.node.is-on .node-box{border-color:var(--blue-d);box-shadow:0 0 0 4px rgba(41,151,255,.14);transform:scale(1.04)}
+.node.warn.is-on .node-box{border-color:var(--orange);box-shadow:0 0 0 4px rgba(255,159,10,.14)}
+.packet{position:absolute;left:0;top:0;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--blue-d);box-shadow:0 0 18px 4px rgba(41,151,255,.6);will-change:transform}
+.wire{stroke:#2c2c2e;stroke-width:2;fill:none}
+.wire-on{stroke:var(--blue-d);stroke-width:2.5;fill:none;stroke-linecap:round}
+
+/* ---------- features ---------- */
+.feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.feat{border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:12px;min-height:280px;transition:transform .4s var(--ease)}
+@media (hover:hover) and (pointer:fine){.feat:hover{transform:translateY(-4px)}}
+.feat-ico{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;margin-bottom:8px}
+
+@media (max-width:860px){
+  .cap{left:16px;right:16px;bottom:92px;max-width:none;background:rgba(0,0,0,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);padding:18px;border-radius:18px}
+  .cap .body{font-size:16px}
+  .cap .h1{font-size:34px}.cap .h2{font-size:28px}
+  .rail{display:none}
+  .hud{top:64px}
+  .answer-card{left:16px;right:16px;width:auto;top:auto;bottom:20px;margin-top:0}
+  .cap[data-c="4"]{display:none} /* on phones the answer card is the caption for the last beat */
+  .app{grid-template-columns:minmax(0,1fr);height:640px}
+  .side{display:none}
+  .thread{padding:18px 16px}
+  .u,.r{max-width:88%}
+  .pipe{height:auto}
+  .pipe-pin{position:relative;height:auto;padding:88px 0}
+  .pipe-grid{grid-template-columns:minmax(0,1fr);gap:32px}
+  .stg{opacity:1}
+  .feats{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  .cap,.cap.is-on,.answer-card,.answer-card.is-on,.hud-i,.hud-i.is-on{transform:none!important;filter:none!important}
+  .hint svg,.msg,.caret,.cite-btn,.gap-tag,.thinking i{animation:none!important}
+  .drawer,.drawer.is-open{transition:visibility 0s!important}
+  .hl,.drawer.is-open .hl,.dot{transition:none!important}
+  .node.is-on .node-box{transform:none}
+}
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="index.html" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="ask.html" aria-current="page">Ask</a>
+<a class="navlink" href="gaps.html">Gaps</a>
+<a class="navlink" href="academy.html">Academy</a>
+<a class="navlink" href="access.html">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="#signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="#try">Try it</a>
+</div>
+</header>
+
+<main>
+<section class="flight" id="flight" aria-label="How a question is answered">
+<div class="stage">
+<canvas class="scene" id="scene" role="img" aria-label="A field of documents seen from above at night, each titled. Blue lines carry a question out to them, stop at a gate around three restricted documents, then narrow to three ranked matches: Sales playbook, Pricing sheet and CRM guide. Scrolling flies the camera down onto the Sales playbook, page 4, where the cited line lights up."></canvas>
+<div class="fallback" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<!-- labels pinned to scene positions by doc-flight.js -->
+<div class="tag plain" id="tag-origin" aria-hidden="true"><span class="tag-in">Your question</span></div>
+<div class="tag plain warn" id="tag-gate" aria-hidden="true"><span class="tag-in">3 restricted · never searched</span></div>
+<div class="tag r1" id="tag-1" aria-hidden="true"><span class="tag-in"><span class="tag-rank">1</span><span class="tag-dive">Diving into</span> Sales playbook <span class="tag-page">p. 4</span></span></div>
+<div class="tag" id="tag-2" aria-hidden="true"><span class="tag-in"><span class="tag-rank">2</span>Pricing sheet <span class="tag-page">p. 2</span></span></div>
+<div class="tag" id="tag-3" aria-hidden="true"><span class="tag-in"><span class="tag-rank">3</span>CRM guide <span class="tag-page">p. 7</span></span></div>
+
+<div class="hud" aria-live="polite">
+<span class="hud-i" data-b="0"><span class="hud-dot"></span>“Can I offer 20% off an annual plan?”</span>
+<span class="hud-i" data-b="1"><span class="hud-dot"></span>Searching 27 documents you can read</span>
+<span class="hud-i warn" data-b="2"><span class="hud-dot"></span>3 restricted documents skipped</span>
+<span class="hud-i" data-b="3"><span class="hud-dot"></span>3 passages ranked</span>
+<span class="hud-i" data-b="4"><span class="hud-dot"></span>Cited line highlighted</span>
+</div>
+
+<div class="cap" data-c="0">
+<p class="eyebrow">Ask</p>
+<h1 class="h1">Ask anything. See the line it came from.</h1>
+<p class="body">Your team asks in plain words. Every answer points to the exact document and page.</p>
+<div class="row-btns" style="margin-top:6px"><a class="pill pill-blue" href="#try">Try the demo <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost dark-ghost" href="#how" style="color:var(--blue-d);border-color:var(--blue-d)">How it answers</a></div>
+</div>
+<div class="cap glass" data-c="1"><p class="eyebrow"><span class="mono">01</span> · Search</p><h2 class="h2">Your question goes out to the documents.</h2><p class="body">It's matched by meaning against every document you're cleared to read.</p></div>
+<div class="cap glass" data-c="2"><p class="eyebrow" style="color:var(--orange)"><span class="mono">02</span> · Access</p><h2 class="h2">Restricted stays restricted.</h2><p class="body">Access is checked before the search. A document you aren't cleared for is never read, so it can't leak into an answer.</p></div>
+<div class="cap glass" data-c="3"><p class="eyebrow"><span class="mono">03</span> · Rank</p><h2 class="h2">The best passages, ranked.</h2><p class="body">Sales playbook, Pricing sheet and CRM guide come out on top. Only these can be used in the answer.</p></div>
+<div class="cap glass" data-c="4"><p class="eyebrow"><span class="mono">04</span> · Answer</p><h2 class="h2">Straight to the Sales playbook, page 4.</h2><p class="body">The cited line is one click away. If nothing answers, the question goes to Knowledge gaps.</p></div>
+
+<div class="answer-card" id="answer-card">
+<div class="bubble" style="font-size:14px">Can I offer 20% off an annual plan?</div>
+<p style="margin:0;font-size:15px;line-height:1.5">Only with the sales director's approval, logged in the CRM before you send the quote.</p>
+<span class="chip" style="align-self:flex-start;background:#1d1d1f;border-color:#424245;color:var(--blue-d)">Sales playbook, p. 4</span>
+</div>
+
+<div class="rail" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+<div class="hint" id="hint" aria-hidden="true">Scroll<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+</div>
+</section>
+
+<section id="try" class="parch sec">
+<div class="wide" style="display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:14px;max-width:640px">
+<p class="eyebrow" data-reveal>Try it</p>
+<h2 class="h2" data-split>Ask the demo workspace.</h2>
+<p class="body" data-reveal style="transition-delay:.15s">You're signed in as a new sales hire. Choose which documents to search, start from one of their questions or type your own, then open the source.</p>
+<p class="live-note" id="live-note" hidden></p>
+</div>
+<div class="app shadow" data-wipe>
+<aside class="side" aria-label="Recent questions">
+<button type="button" class="pill pill-blue pill-sm" id="new-chat" style="margin-bottom:12px">New question</button>
+<p style="margin:6px 10px;font-size:12px;font-weight:600;color:var(--muted)">Recent</p>
+<button type="button" class="recent is-on">Discount approvals</button>
+<button type="button" class="recent">Wifi password</button>
+<button type="button" class="recent">Parking</button>
+<span style="flex:1"></span>
+<div style="padding:10px;font-size:12px;line-height:1.45;color:var(--muted)">Acme workspace<br>27 of 30 documents searchable for you</div>
+</aside>
+<div class="main">
+<div class="bar">
+<p class="disp" style="margin:0;font-size:17px;font-weight:600">Ask</p>
+<span style="flex:1"></span>
+<button type="button" class="scope-btn" id="scope-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="picker">
+<span class="scope-stack" id="scope-stack" aria-hidden="true"></span><span id="scope-label">All documents</span>
+<svg class="scope-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+<span class="role">Sales hire</span>
+</div>
+<div class="thread" id="thread" aria-live="polite"></div>
+<form class="composer" id="composer">
+<div class="tray" id="tray" aria-label="Documents this question searches"></div>
+<div class="chips" id="chips"></div>
+<label class="field"><span class="sr">Your question</span>
+<input class="input" id="input" type="text" placeholder="Ask about your documents" autocomplete="off">
+<button type="submit" class="send" id="send" aria-label="Send" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+</label>
+</form>
+<section class="picker" id="picker" role="dialog" aria-modal="false" aria-labelledby="picker-title" hidden>
+<div class="picker-head">
+<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+<h3 class="disp" id="picker-title" style="margin:0;font-size:19px;font-weight:600">Choose documents to search</h3>
+<span class="picker-count mono" id="picker-count" aria-live="polite"></span>
+</div>
+<div class="picker-tools">
+<label class="pfield"><span class="sr">Filter documents</span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+<input type="search" id="picker-filter" placeholder="Filter by name, summary or question" autocomplete="off">
+</label>
+<button type="button" class="linkbtn" id="pick-all">Select all</button>
+<button type="button" class="linkbtn" id="pick-none">Clear</button>
+</div>
+</div>
+<div class="picker-grid" id="picker-grid"></div>
+<p class="picker-empty" id="picker-empty" hidden>No documents match that filter.</p>
+<div class="picker-foot">
+<p class="body" style="font-size:13px;flex:1" id="picker-note">Nothing selected searches every document you can read.</p>
+<button type="button" class="pill pill-blue pill-sm" id="picker-done">Done</button>
+</div>
+</section>
+</div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Source">
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1"><p class="disp" id="src-doc" style="margin:0;font-size:19px;font-weight:600"></p><p id="src-meta" style="margin:2px 0 0;font-size:13px;color:var(--muted)"></p></div>
+<button type="button" class="icon-btn" id="close-drawer" aria-label="Close source"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+<div style="height:1px;background:var(--hair)"></div>
+<p class="excerpt" id="src-text"></p>
+<span style="flex:1"></span>
+<p style="margin:0;font-size:13px;color:var(--muted)">Version 3 · updated [DATE]</p>
+<a href="#try" style="font-size:15px">Open the full document</a>
+</aside>
+</div>
+</div>
+</section>
+
+<section id="how" class="dark pipe">
+<div class="pipe-pin">
+<div class="wide pipe-grid">
+<div style="display:flex;flex-direction:column;gap:24px">
+<p class="eyebrow">How an answer is built</p>
+<h2 class="h2">Four steps, every time.</h2>
+<div class="stages" id="stages">
+<div class="stg"><span class="stg-n">1</span><div><p class="h3" style="font-size:20px">Question</p><p class="body">Asked in plain words, by someone signed in to your workspace.</p></div></div>
+<div class="stg"><span class="stg-n">2</span><div><p class="h3" style="font-size:20px">Access check</p><p class="body">Their role decides which documents can be searched at all.</p></div></div>
+<div class="stg"><span class="stg-n">3</span><div><p class="h3" style="font-size:20px">Retrieve and rank</p><p class="body">Passages are scored by meaning; only the best few go forward.</p></div></div>
+<div class="stg"><span class="stg-n">4</span><div><p class="h3" style="font-size:20px">Answer with citations</p><p class="body">Written only from those passages, each claim linked to its page.</p></div></div>
+</div>
+</div>
+<div class="board" id="board" aria-hidden="true">
+<svg viewBox="0 0 100 95" preserveAspectRatio="none">
+<path class="wire" d="M16 16 H50 V38 M50 38 V58 M50 58 H84 V80"/>
+<path class="wire-on" id="wire-on" d="M16 16 H50 V38 M50 38 V58 M50 58 H84 V80" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/>
+</svg>
+<div class="node" style="left:16%;top:17%"><span class="node-box">“20% off an annual plan?”</span>Question</div>
+<div class="node warn" style="left:50%;top:40%"><span class="node-box">Sales hire · 27 of 30</span>Access check</div>
+<div class="node" style="left:50%;top:61%"><span class="node-box">Playbook · Pricing · CRM</span>Ranked passages</div>
+<div class="node" style="left:84%;top:84%"><span class="node-box">Answer + p. 4</span>Cited answer</div>
+<span class="packet" id="packet"></span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec" style="background:#fff">
+<div class="wide" style="display:flex;flex-direction:column;gap:48px">
+<h2 class="h2" data-split style="max-width:18ch">Built so nobody has to take it on trust.</h2>
+<div class="feats" data-stagger>
+<div class="feat dark"><span class="feat-ico" style="background:#1d1d1f"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2997ff" stroke-width="2" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 13h6"/></svg></span><p class="eyebrow">Cited</p><h3 class="h3">Every claim has a page.</h3><p class="body">Open the source and the exact line is highlighted.</p></div>
+<div class="feat tile-d"><span class="feat-ico" style="background:#1d1d1f"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff9f0a" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><p class="eyebrow" style="color:var(--orange)">Access-checked</p><h3 class="h3">Search what you're cleared for.</h3><p class="body">Restricted documents never reach the answer, lessons or tests.</p></div>
+<div class="feat parch"><span class="feat-ico" style="background:#fff"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0066cc" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg></span><p class="eyebrow">Gaps captured</p><h3 class="h3">Unanswered isn't lost.</h3><p class="body">Questions no document answers are ranked in <a href="gaps.html">Knowledge gaps</a>.</p></div>
+</div>
+</div>
+<div class="marquee" style="margin-top:72px" aria-label="Example documents">
+<div class="marquee-in">
+<span class="doc-pill">Company handbook</span><span class="doc-pill">Sales playbook</span><span class="doc-pill">Deploy runbook</span><span class="doc-pill">Expense policy</span><span class="doc-pill">Security basics</span><span class="doc-pill">Brand guide</span><span class="doc-pill">IT setup</span><span class="doc-pill">Benefits overview</span><span class="doc-pill">Incident playbook</span>
+<span class="doc-pill" aria-hidden="true">Company handbook</span><span class="doc-pill" aria-hidden="true">Sales playbook</span><span class="doc-pill" aria-hidden="true">Deploy runbook</span><span class="doc-pill" aria-hidden="true">Expense policy</span><span class="doc-pill" aria-hidden="true">Security basics</span><span class="doc-pill" aria-hidden="true">Brand guide</span><span class="doc-pill" aria-hidden="true">IT setup</span><span class="doc-pill" aria-hidden="true">Benefits overview</span><span class="doc-pill" aria-hidden="true">Incident playbook</span>
+</div>
+</div>
+</section>
+
+<section class="dark sec cta">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Stop answering the same question twice.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Upload one handbook and ask it anything. Your documents stay in your workspace and are never used to train a model.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="index.html">Back to overview</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span class="spacer" style="flex:1"></span><a href="access.html">Privacy</a><a href="#try">Contact</a></div></footer>
+
+<script src="assets/motion.js"></script>
+<script type="module">
+import { initFlight } from './assets/doc-flight.js';
+import { initChat } from './assets/ask-chat.js';
+const RAG = window.RAG;
+
+/* ---------- hero ---------- */
+const section = document.getElementById('flight');
+const caps = [...document.querySelectorAll('.cap')];
+const huds = [...document.querySelectorAll('.hud-i')];
+const dots = [...document.querySelectorAll('.rail .dot')];
+const card = document.getElementById('answer-card');
+const hint = document.getElementById('hint');
+const setBeat = (b) => {
+  caps.forEach((c, i) => c.classList.toggle('is-on', i === b));
+  huds.forEach((h, i) => h.classList.toggle('is-on', i === b));
+  dots.forEach((d, i) => { d.classList.toggle('is-on', i === b); d.classList.toggle('is-past', i < b); });
+  card.classList.toggle('is-on', b === 4);
+};
+setBeat(0);
+const flight = initFlight({
+  section, canvas: document.getElementById('scene'),
+  labels: { origin: document.getElementById('tag-origin'), gate: document.getElementById('tag-gate'), matches: [1, 2, 3].map((i) => document.getElementById('tag-' + i)) },
+  onBeat: setBeat,
+  onProgress: (p) => { hint.style.opacity = p > 0.02 ? 0 : 1; },
+});
+if (!flight) {
+  document.querySelector('.stage').classList.add('no-webgl');
+  RAG.scrub(section, (p) => setBeat([0.13, 0.36, 0.57, 0.78].filter((s) => p >= s).length));
+}
+
+/* ---------- chat + document picker: assets/ask-chat.js ---------- */
+initChat();
+
+/* ---------- pipeline: a packet travels the wire as you scroll ---------- */
+const stages = [...document.querySelectorAll('.stg')];
+const wire = document.getElementById('wire-on'), packet = document.getElementById('packet'), board = document.getElementById('board');
+const nodes = [...board.querySelectorAll('.node')];
+const pts = [[16, 16], [50, 16], [50, 38], [50, 58], [84, 58], [84, 80]];
+const segL = pts.slice(1).map((p, i) => Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]));
+const total = segL.reduce((a, b) => a + b, 0);
+const at = (f) => { let d = f * total; for (let i = 0; i < segL.length; i++) { if (d <= segL[i]) { const k = d / segL[i]; return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k]; } d -= segL[i]; } return pts[pts.length - 1]; };
+const drawPipe = (p) => {
+  const f = RAG.smooth(0.08, 0.92, p);
+  wire.style.strokeDashoffset = (1 - f).toFixed(4);
+  const [x, y] = at(f); const w = board.clientWidth, h = board.clientHeight;
+  packet.style.transform = `translate3d(${(x / 100 * w).toFixed(1)}px, ${(y / 95 * h).toFixed(1)}px, 0)`;
+  const step = f <= 0 ? 0 : Math.min(3, Math.floor(f * 3.999));
+  stages.forEach((st, i) => { st.classList.toggle('is-on', i === step); st.classList.toggle('is-past', i < step); });
+  nodes.forEach((n, i) => n.classList.toggle('is-on', i === step));
+};
+if (matchMedia('(max-width: 860px)').matches) { RAG.scrub(board, drawPipe); } else RAG.scrub(document.getElementById('how'), drawPipe);
+</script>
+</body>
+</html>

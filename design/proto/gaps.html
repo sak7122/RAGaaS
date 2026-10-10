@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge gaps · RAGaaS</title>
+<link rel="stylesheet" href="assets/base.css">
+<style>
+.hero{padding:104px 0 120px;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:64px;align-items:center}
+/* live board */
+.board{position:relative;border-radius:24px;background:#1d1d1f;border:1px solid #2c2c2e;padding:22px 22px 18px;display:flex;flex-direction:column;gap:14px}
+.board-head{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted-d)}
+.live{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 rgba(48,209,88,.5);animation:live 2s ease-out infinite}
+@keyframes live{0%{box-shadow:0 0 0 0 rgba(48,209,88,.45)}100%{box-shadow:0 0 0 10px rgba(48,209,88,0)}}
+.rows{position:relative}
+.grow-row{position:absolute;left:0;right:0;height:64px;display:grid;grid-template-columns:28px minmax(0,1fr) 110px 44px 120px;align-items:center;gap:14px;padding:0 6px;border-radius:12px;transition:transform .55s var(--ease-io),opacity .3s var(--ease),background-color .4s ease}
+.grow-row.bump{background:rgba(41,151,255,.1)}
+.rank{font-variant-numeric:tabular-nums;color:var(--muted-d);font-size:14px;text-align:center}
+.q{font-size:16px;color:#f5f5f7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.n{font-variant-numeric:tabular-nums;font-weight:600;color:#f5f5f7;text-align:right;display:inline-block;transition:transform .25s var(--ease)}
+.n.pop{animation:npop .45s var(--ease)}
+@keyframes npop{0%{transform:translateY(-6px);opacity:.3}100%{transform:none;opacity:1}}
+.board .fill{transition:transform .6s var(--ease)}
+.write{min-height:36px;border-radius:9999px;border:1px solid #424245;background:transparent;color:#f5f5f7;font:500 13px/1 var(--font);cursor:pointer;transition:transform .16s var(--ease),background-color .2s ease,border-color .2s ease,color .2s ease}
+.write:hover{background:rgba(255,255,255,.06)}
+.write:active{transform:scale(.97)}
+.grow-row.done{opacity:.4}
+.grow-row.done .q{text-decoration:line-through;text-decoration-color:var(--blue-d)}
+.grow-row.done .write{border-color:transparent;color:var(--green)}
+.toast{position:absolute;left:50%;bottom:-18px;transform:translate(-50%,8px);opacity:0;display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:0 14px;border-radius:9999px;background:#f5f5f7;color:#1d1d1f;font-size:13px;white-space:nowrap;box-shadow:0 10px 30px -10px rgba(0,0,0,.6);transition:opacity .2s var(--ease),transform .2s var(--ease)}
+.toast.is-on{opacity:1;transform:translate(-50%,0);transition:opacity .3s var(--ease),transform .4s var(--ease)}
+/* what counts */
+.counts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.cnt{border-radius:22px;padding:28px;display:flex;flex-direction:column;gap:12px;min-height:250px}
+.badge{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border-radius:9999px;font-size:12px;font-weight:600}
+/* trend */
+.chart{position:relative;border-radius:24px;background:#fff;box-shadow:0 0 0 1px var(--hair);padding:28px}
+.chart svg{width:100%;height:auto;overflow:visible}
+.line{fill:none;stroke:var(--blue);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset 1.8s var(--ease-io)}
+.area{fill:url(#ga);opacity:0;transition:opacity .8s ease 1s}
+.is-in .line{stroke-dashoffset:0}
+.is-in .area{opacity:1}
+.pt{fill:#fff;stroke:var(--blue);stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.6);transition:opacity .3s ease,transform .4s var(--ease)}
+.is-in .pt{opacity:1;transform:none;transition-delay:calc(.3s + var(--i) * 180ms)}
+.ann{position:absolute;display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--muted);opacity:0;transform:translateY(6px);transition:opacity .4s ease 1.6s,transform .5s var(--ease) 1.6s}
+.is-in .ann{opacity:1;transform:none}
+/* loop: gap -> doc -> answered */
+.loop{position:relative;height:280vh}
+.loop-pin{position:sticky;top:0;height:100vh;display:flex;align-items:center}
+.loop-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:64px;align-items:center;width:100%}
+.lstep{padding:16px 0;opacity:.3;transition:opacity .35s ease}
+.lstep.is-on{opacity:1}
+.stagecard{position:relative;height:340px}
+.sc{position:absolute;inset:0;border-radius:24px;padding:28px;display:flex;flex-direction:column;gap:14px;opacity:0;transform:translateY(16px) scale(.97);filter:blur(4px);transition:opacity .2s var(--ease),transform .2s var(--ease),filter .2s var(--ease)}
+.sc.is-on{opacity:1;transform:none;filter:blur(0);transition:opacity .45s var(--ease) .08s,transform .55s var(--ease) .08s,filter .45s var(--ease) .08s}
+.upl{height:8px;border-radius:4px;background:#e8e8ed;overflow:hidden}
+.upl i{display:block;height:100%;background:var(--blue);transform-origin:0 50%;transform:scaleX(0);transition:transform 1.4s var(--ease-io) .3s}
+.sc.is-on .upl i{transform:scaleX(1)}
+@media (max-width:1180px){
+  .grow-row{grid-template-columns:24px minmax(0,1fr) 36px 116px}
+  .grow-row .track{display:none}
+}
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:minmax(0,1fr);gap:40px}
+  .grow-row{grid-template-columns:minmax(0,1fr) 36px 96px;height:72px}
+  .grow-row .rank,.grow-row .track{display:none}
+  .counts{grid-template-columns:minmax(0,1fr)}
+  .loop{height:auto}.loop-pin{position:relative;height:auto;padding:88px 0}
+  .loop-grid{grid-template-columns:minmax(0,1fr);gap:28px}
+  .lstep{opacity:1}
+  .ann{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .live,.n.pop{animation:none!important}
+  .grow-row{transition:opacity .2s ease!important}
+  .line{transition:none!important;stroke-dashoffset:0}
+  .area,.pt,.ann{transition:none!important}
+  .sc,.sc.is-on{transform:none!important;filter:none!important}
+  .upl i,.board .fill{transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="index.html" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="ask.html">Ask</a>
+<a class="navlink" href="gaps.html" aria-current="page">Gaps</a>
+<a class="navlink" href="academy.html">Academy</a>
+<a class="navlink" href="access.html">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="#signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="#start">Start free</a>
+</div>
+</header>
+
+<main>
+<section class="hero dark">
+<div class="wide hero-grid">
+<div style="display:flex;flex-direction:column;gap:20px">
+<p class="eyebrow" data-reveal>Knowledge gaps</p>
+<h1 class="h1" data-split>See what your docs can't answer.</h1>
+<p class="lede" data-reveal style="transition-delay:.3s">Every question nothing in your knowledge base answers is collected and ranked by how often it's asked. The top row is the next document to write.</p>
+<div class="row-btns" data-reveal style="transition-delay:.4s"><a class="pill pill-blue" href="#start">Find your gaps <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="#counts">What counts as a gap</a></div>
+</div>
+<div class="board" data-reveal="scale" style="transition-delay:.2s">
+<div class="board-head"><span class="live" aria-hidden="true"></span><span>Live · example workspace</span><span style="flex:1"></span><span class="mono" id="total">0 questions this week</span></div>
+<div class="rows" id="rows" aria-live="polite"></div>
+<div class="toast" id="toast" role="status"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg><span id="toast-t">Doc drafted</span></div>
+</div>
+</div>
+</section>
+
+<section id="counts" class="sec" style="background:#fff">
+<div class="wide" style="display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:16px;max-width:680px">
+<p class="eyebrow" data-reveal>What counts</p>
+<h2 class="h2" data-split>Only real gaps make the list.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">A question counts only if nothing in the knowledge base answers it, not if the person asking just isn't cleared for the document that does.</p>
+</div>
+<div class="counts" data-stagger>
+<div class="cnt parch"><span class="badge" style="background:#e3f3e8;color:#167a3e">Answered</span><p class="h3" style="font-size:22px">“When does the wifi password change?”</p><p class="body">Company handbook, p. 11 answers it. Not a gap.</p></div>
+<div class="cnt tile-d"><span class="badge" style="background:rgba(255,159,10,.16);color:var(--orange)">Not cleared</span><p class="h3" style="font-size:22px">“How do I roll back a release?”</p><p class="body">The Deploy runbook answers it, but this person can't read it. Not a gap, and the asker isn't told the document exists.</p></div>
+<div class="cnt dark"><span class="badge" style="background:rgba(41,151,255,.16);color:var(--blue-d)">Gap</span><p class="h3" style="font-size:22px">“What is the parking policy?”</p><p class="body">Nothing in any document covers it. Counted, ranked, and waiting for someone to write it.</p></div>
+</div>
+</div>
+</section>
+
+<section class="sec parch">
+<div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:56px;align-items:center">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p class="eyebrow" data-reveal>Trend</p>
+<h2 class="h2" data-split>Write the doc. Watch the line drop.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">Weekly unanswered questions in an example workspace. Each drop is a document someone wrote from the top of the list.</p>
+</div>
+<div class="chart" data-once>
+<p style="margin:0 0 14px;font-size:13px;color:var(--muted)">Unanswered questions per week · example data</p>
+<svg viewBox="0 0 400 180" role="img" aria-label="Line chart of unanswered questions per week in an example workspace, falling from 42 to 11 over eight weeks.">
+<defs><linearGradient id="ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#0066cc" stop-opacity=".18"/><stop offset="1" stop-color="#0066cc" stop-opacity="0"/></linearGradient></defs>
+<g stroke="#e8e8ed" stroke-width="1"><line x1="0" x2="400" y1="20" y2="20"/><line x1="0" x2="400" y1="80" y2="80"/><line x1="0" x2="400" y1="140" y2="140"/></g>
+<path class="area" d="M10 26 L65 38 L120 44 L175 78 L230 90 L285 112 L340 120 L390 134 L390 170 L10 170 Z"/>
+<path class="line" pathLength="1" d="M10 26 L65 38 L120 44 L175 78 L230 90 L285 112 L340 120 L390 134"/>
+<circle class="pt" style="--i:0" cx="10" cy="26" r="4"/><circle class="pt" style="--i:1" cx="65" cy="38" r="4"/><circle class="pt" style="--i:2" cx="120" cy="44" r="4"/><circle class="pt" style="--i:3" cx="175" cy="78" r="4"/><circle class="pt" style="--i:4" cx="230" cy="90" r="4"/><circle class="pt" style="--i:5" cx="285" cy="112" r="4"/><circle class="pt" style="--i:6" cx="340" cy="120" r="4"/><circle class="pt" style="--i:7" cx="390" cy="134" r="4"/>
+</svg>
+<div class="ann" style="left:46%;top:38%"><b style="color:var(--ink)">Parking policy written</b>week 4</div>
+</div>
+</div>
+</section>
+
+<section class="loop dark" id="loop">
+<div class="loop-pin">
+<div class="wide loop-grid">
+<div style="display:flex;flex-direction:column;gap:10px">
+<p class="eyebrow">The loop</p>
+<h2 class="h2" style="margin-bottom:14px">From gap to answer.</h2>
+<div class="lstep"><p class="h3" style="font-size:22px">1 · A question goes unanswered</p><p class="body">Asked nine times this month. Nothing covers it.</p></div>
+<div class="lstep"><p class="h3" style="font-size:22px">2 · Someone writes it up</p><p class="body">Upload the new document. It's searchable in minutes.</p></div>
+<div class="lstep"><p class="h3" style="font-size:22px">3 · The next person gets an answer</p><p class="body">Cited, from the new document, and off the list.</p></div>
+</div>
+<div class="stagecard" aria-hidden="true">
+<div class="sc" style="background:#1d1d1f;border:1px solid #2c2c2e"><p class="body" style="font-size:13px">Knowledge gaps · rank 1</p><p class="h3">What is the parking policy?</p><div class="track" style="height:8px"><span class="fill" style="transform:scaleX(1)"></span></div><p class="body"><span class="mono" style="color:#f5f5f7;font-weight:600">9</span> asks this month</p></div>
+<div class="sc" style="background:#fff;color:var(--ink)"><p class="body" style="font-size:13px">Uploading</p><p class="h3">Parking policy.docx</p><div class="upl"><i></i></div><p class="body">Readable by everyone · version 1</p></div>
+<div class="sc" style="background:#1d1d1f;border:1px solid #2c2c2e"><div class="bubble">What is the parking policy?</div><div class="reply">Staff park in level 2 of the north garage. Visitors get a pass at reception.<div style="margin-top:8px"><span class="chip">Parking policy, p. 1</span></div></div><span class="badge" style="background:rgba(48,209,88,.16);color:var(--green)">Removed from Gaps</span></div>
+</div>
+</div>
+</div>
+</section>
+
+<section id="start" class="sec cta" style="background:#fff">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Your next doc is already on the list.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Connect a handbook and the list starts filling from the first unanswered question.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="ask.html#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="academy.html">Next: Academy</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span style="flex:1"></span><a href="access.html">Privacy</a><a href="#start">Contact</a></div></footer>
+
+<script src="assets/motion.js"></script>
+<script>
+const RAG = window.RAG;
+/* ---------- live board: questions arrive, counts tick, rows re-rank ---------- */
+const GAPS = [
+  { t: 'What is the parking policy?', n: 9 }, { t: 'How do I expense a client dinner?', n: 7 },
+  { t: 'Who covers on-call over the holidays?', n: 6 }, { t: 'Can I work from another country for a month?', n: 4 },
+  { t: 'Where is the logo pack?', n: 3 }, { t: 'Is there a gym allowance?', n: 2 },
+];
+const ROW_H = innerWidth < 860 ? 76 : 68;
+const rowsEl = document.getElementById('rows'), total = document.getElementById('total'), toast = document.getElementById('toast');
+rowsEl.style.height = GAPS.length * ROW_H + 'px';
+const rows = GAPS.map((g, i) => {
+  const el = document.createElement('div'); el.className = 'grow-row';
+  el.innerHTML = `<span class="rank"></span><span class="q"></span><span class="track"><span class="fill"></span></span><span class="n mono"></span><button type="button" class="write">Write the doc</button>`;
+  el.querySelector('.q').textContent = g.t;
+  rowsEl.appendChild(el);
+  const r = { ...g, id: i, done: false, el };
+  el.querySelector('.write').onclick = () => {
+    if (r.done) return; r.done = true; el.classList.add('done'); el.querySelector('.write').textContent = 'Drafted';
+    document.getElementById('toast-t').textContent = `Draft started: ${g.t.replace('?', '')}`;
+    toast.classList.add('is-on'); clearTimeout(window.__tt); window.__tt = setTimeout(() => toast.classList.remove('is-on'), 2200);
+    layout();
+  };
+  return r;
+});
+const layout = (bumped) => {
+  const ranked = [...rows].sort((a, b) => (a.done - b.done) || (b.n - a.n));
+  const max = Math.max(...rows.filter((r) => !r.done).map((r) => r.n), 1);
+  ranked.forEach((r, i) => {
+    r.el.style.transform = `translateY(${i * ROW_H}px)`;
+    r.el.querySelector('.rank').textContent = r.done ? '–' : i + 1;
+    r.el.querySelector('.fill').style.transform = `scaleX(${(r.n / max).toFixed(3)})`;
+    const n = r.el.querySelector('.n');
+    if (n.textContent !== String(r.n)) { n.textContent = r.n; if (r === bumped && !RAG.reduce) { n.classList.remove('pop'); void n.offsetWidth; n.classList.add('pop'); } }
+    r.el.classList.toggle('bump', r === bumped);
+  });
+  total.textContent = `${rows.reduce((a, r) => a + r.n, 0)} questions this week`;
+};
+layout();
+// a new ask lands every ~1.6s while the board is on screen; weighted toward lower rows so ranks change
+let timer = 0, onScreen = false;
+const tick = () => {
+  const open = rows.filter((r) => !r.done); if (!open.length) return;
+  const pick = open[Math.floor(Math.pow(Math.random(), 0.7) * open.length)];
+  pick.n += 1 + (Math.random() < 0.3 ? 1 : 0);
+  layout(pick);
+  setTimeout(() => pick.el.classList.remove('bump'), 700);
+};
+new IntersectionObserver(([e]) => {
+  onScreen = e.isIntersecting; clearInterval(timer);
+  if (onScreen && !RAG.reduce) timer = setInterval(tick, 1600);
+}).observe(rowsEl);
+
+/* ---------- the loop: scrubbed through three states ---------- */
+const lsteps = [...document.querySelectorAll('.lstep')], scs = [...document.querySelectorAll('.sc')];
+const setLoop = (i) => { lsteps.forEach((s, j) => s.classList.toggle('is-on', j === i)); scs.forEach((s, j) => s.classList.toggle('is-on', j === i)); };
+setLoop(0);
+if (matchMedia('(max-width: 860px)').matches || RAG.reduce) {
+  // no pin: advance as each step scrolls into view
+  lsteps.forEach((s, i) => { s.dataset.once = ''; s.addEventListener('reveal', () => setLoop(i)); RAG.observe(s); });
+} else RAG.scrub(document.getElementById('loop'), (p) => setLoop(p < 0.33 ? 0 : p < 0.66 ? 1 : 2));
+</script>
+</body>
+</html>
