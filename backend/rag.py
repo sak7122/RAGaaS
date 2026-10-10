@@ -134,6 +134,18 @@ class VertexEmbedder:
 
 
 # ── Generator ─────────────────────────────────────────────────────────────────
+_NOT_FOUND = re.compile(r"\b(cannot|can't|can not|couldn't|could not|unable to) find\b", re.I)
+
+
+def usable_history(history: list[dict] | None, turns: int = 4) -> list[dict]:
+    """The last few turns worth showing the model. Earlier "cannot find" replies are
+    dropped: with them in the prompt, the model repeats the refusal even when the
+    new excerpts do answer the question."""
+    kept = [t for t in (history or [])
+            if not (t.get("role") == "assistant" and _NOT_FOUND.search(t.get("text", "")))]
+    return kept[-turns:]
+
+
 class Generator(Protocol):
     def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str: ...
 
@@ -159,7 +171,11 @@ class GeminiGenerator:
 
     SYSTEM = (
         "You are a retrieval-augmented assistant. Answer ONLY from the provided "
-        "document excerpts. If the answer is not in them, say you cannot find it. "
+        "document excerpts. If they answer only part of the question, answer that part "
+        "fully and then say briefly which parts the excerpts do not cover. Only if the "
+        "excerpts contain nothing relevant, say you cannot find it. "
+        "Judge every question on the current excerpts alone: earlier turns only tell you "
+        "what the user means, never what the answer is. "
         "Be thorough and complete — cover all relevant points found in the excerpts. "
         "Cite the source file and page inline like (file.pdf p.N)."
     )
@@ -184,8 +200,9 @@ class GeminiGenerator:
 
     def rewrite_query(self, question: str, history: list[dict]) -> str:
         """Produce a retrieval-optimized keyword expansion of the question."""
+        history = usable_history(history)
         history_text = "\n".join(
-            f"{t['role'].capitalize()}: {t['text']}" for t in history[-4:]
+            f"{t['role'].capitalize()}: {t['text']}" for t in history
         )
         context_block = f"Conversation:\n{history_text}\n\n" if history else ""
         prompt = (
@@ -240,9 +257,10 @@ class GeminiGenerator:
             f"[{c['file_name']} p.{c.get('page', 1)}]\n{c['text']}" for c in chunks
         )
         history_block = ""
+        history = usable_history(history)
         if history:
             history_block = "Conversation history:\n" + "\n".join(
-                f"{t['role'].capitalize()}: {t['text']}" for t in history[-4:]
+                f"{t['role'].capitalize()}: {t['text']}" for t in history
             ) + "\n\n"
         # Defense against prompt injection from untrusted PDF text: the context is
         # clearly fenced and the system prompt forbids following instructions in it.

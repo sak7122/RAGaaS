@@ -486,6 +486,22 @@ def gather_candidates(tenant_id: str, search_query: str, scope: set[str] | None)
     return candidates
 
 
+def distinct_top(ranked: list[tuple[float, dict]], k: int) -> list[tuple[float, dict]]:
+    """Best k passages with identical text kept once. The same file uploaded twice
+    otherwise fills the answer's k slots in pairs and halves the evidence it sees."""
+    seen: set[str] = set()
+    out: list[tuple[float, dict]] = []
+    for s, c in ranked:
+        key = re.sub(r"\s+", " ", c.get("text", "")).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((s, c))
+        if len(out) == k:
+            break
+    return out
+
+
 def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
                     history: list[dict] | None = None,
                     scope: set[str] | None = None) -> list[dict]:
@@ -519,7 +535,7 @@ def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
             "file_name": c["file_name"], "page": c.get("page", 1),
             "chunk_index": c.get("chunk_index", 0), "text": c["text"], "score": s,
         }
-        for s, c in ranked[:k]
+        for s, c in distinct_top(ranked, k)
     ]
 
 
@@ -730,7 +746,7 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
     ranked.sort(key=lambda t: t[0], reverse=True)
     # Drop chunks below relevance floor to avoid poisoning Gemini with noise
     ranked = [(s, c) for s, c in ranked if s >= 0.05]
-    top = ranked[:6]
+    top = distinct_top(ranked, 6)
     top_chunks = [c for _, c in top]
 
     answer = generator.generate(req.message, top_chunks, history)
@@ -1153,7 +1169,7 @@ def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: 
                 if score >= 0.05:
                     ranked.append((round(score, 4), c))
             ranked.sort(key=lambda t: t[0], reverse=True)
-            top_chunks = [c for _, c in ranked[:6]]
+            top_chunks = [c for _, c in distinct_top(ranked, 6)]
             answer = generator.generate(question, top_chunks, [])
             max_score = ranked[0][0] if ranked else 0.0
             insights_store.record(tenant_id, question, max_score, answer=answer,
