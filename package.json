@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@types/recharts": "^2.0.1",
+    "@types/three": "0.160.0",
     "@vitejs/plugin-react": "^4.3.4",
     "firebase": "^11.1.0",
     "framer-motion": "^12.40.0",
@@ -16,6 +17,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.1",
+    "three": "0.160.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   },

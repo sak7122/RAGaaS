@@ -6,15 +6,27 @@
 
 export const DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
-type DocMeta = { file_name: string; chunks: number; uploaded_at: string };
+type DocMeta = {
+  file_name: string; chunks: number; uploaded_at: string;
+  title: string; pages: number; summary: string; questions: string[]; profile_source: string;
+};
 type Member = { uid: string; email: string; role: string; invited_at: string; joined_at: string | null };
 
 const now = () => new Date().toISOString();
 
 const demoDocs: DocMeta[] = [
-  { file_name: "Q3_Earnings_Report.pdf", chunks: 48, uploaded_at: now() },
-  { file_name: "Employee_Handbook.pdf", chunks: 132, uploaded_at: now() },
-  { file_name: "Product_Roadmap_2026.pdf", chunks: 27, uploaded_at: now() },
+  { file_name: "Q3_Earnings_Report.pdf", chunks: 48, uploaded_at: now(), title: "Q3 Earnings Report", pages: 14,
+    profile_source: "generated",
+    summary: "Third-quarter results: revenue, margins and segment growth, with the outlook for the next two quarters.",
+    questions: ["What was Q3 revenue?", "Which segment grew fastest?", "What is the Q4 outlook?"] },
+  { file_name: "Employee_Handbook.pdf", chunks: 132, uploaded_at: now(), title: "Employee Handbook", pages: 42,
+    profile_source: "generated",
+    summary: "Policies, benefits and day-one setup for every employee: access, leave, security training and the 30-day ramp.",
+    questions: ["What happens on day one?", "When is security training due?", "How many days of leave do I get?"] },
+  { file_name: "Product_Roadmap_2026.pdf", chunks: 27, uploaded_at: now(), title: "Product Roadmap 2026", pages: 9,
+    profile_source: "generated",
+    summary: "What ships in 2026 and in what order: multi-region availability, SSO and the analytics redesign.",
+    questions: ["What ships in Q1 2026?", "When does SSO launch?"] },
 ];
 
 const demoMembers: Member[] = [
@@ -33,8 +45,18 @@ const demoStatus = () => ({
   documents: demoDocs.length,
 });
 
-function cannedAnswer(question: string) {
+function cannedAnswer(question: string, scope: string[] = []) {
   queriesUsed += 1;
+  if (scope.length && !scope.some((f) => f !== "Employee_Handbook.pdf")) {
+    // The handbook doesn't cover revenue or roadmap questions: show the scoped miss.
+    return {
+      answer: "I cannot find that answer in the selected documents.",
+      citations: [],
+      retrieval: { engine: "Hybrid Vector Search", query_terms: [], chunks_searched: 132, candidates_ranked: 0,
+        top_k: 0, max_score: 0, latency_ms: 140, scoped_to: scope },
+      tenant_id: "acme-corp", queries_used: queriesUsed, query_limit: 1000,
+    };
+  }
   const terms = Array.from(
     new Set(question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []),
   ).sort();
@@ -56,6 +78,7 @@ function cannedAnswer(question: string) {
       top_k: 2,
       max_score: 0.92,
       latency_ms: 180 + Math.floor(Math.random() * 90),
+      scoped_to: scope,
     },
     tenant_id: "acme-corp",
     queries_used: queriesUsed,
@@ -135,8 +158,13 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
   if (path.includes("/api/tenant/members/")) return json({ ok: true });
 
   if (path.endsWith("/api/chat") && method === "POST") {
-    const q = init?.body ? (JSON.parse(init.body as string).message as string) : "";
-    return json(cannedAnswer(q));
+    const b = init?.body ? JSON.parse(init.body as string) : {};
+    return json(cannedAnswer(String(b.message ?? ""), b.file_names ?? []));
+  }
+  if (path.endsWith("/profile") && path.includes("/api/documents/") && method === "POST") {
+    const name = decodeURIComponent(path.split("/api/documents/")[1].replace(/\/profile$/, ""));
+    const doc = demoDocs.find((d) => d.file_name === name);
+    return doc ? json(doc) : json({ detail: "Document not found" }, 404);
   }
 
   if (path.endsWith("/api/solve") && method === "POST") {

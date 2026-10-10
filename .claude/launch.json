@@ -6,6 +6,18 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "5180", "--bind", "127.0.0.1", "--directory", "design/proto"],
       "port": 5180
+    },
+    {
+      "name": "app-demo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--mode", "demo", "--port", "5174", "--strictPort"],
+      "port": 5174
+    },
+    {
+      "name": "app-signed-out",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-Command", "$env:VITE_FIREBASE_USE_EMULATOR='false'; $env:VITE_FIREBASE_API_KEY='ci-placeholder'; $env:VITE_FIREBASE_AUTH_DOMAIN='ci-placeholder.firebaseapp.com'; $env:VITE_FIREBASE_APP_ID='1:000:web:ci'; $env:VITE_API_URL='http://127.0.0.1:8000'; npx vite --port 5175 --strictPort"],
+      "port": 5175
     }
   ]
 }

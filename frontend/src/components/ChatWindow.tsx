@@ -3,9 +3,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, ChevronDown, Copy, Check, Zap, ChevronRight,
   Search, Sparkles, Layers, Timer, Hash, Share2, Link,
-  BookOpen, BarChart2, FileText,
+  BookOpen, BarChart2, FileText, Library, X,
 } from "lucide-react";
 import { StreamingText, toast } from "./ui";
+import { DocumentMeta, docTitle } from "./DocumentList";
+import { DocumentPicker, fileType } from "./DocumentPicker";
 
 export type Citation = {
   file_name: string;
@@ -23,6 +25,7 @@ export type RetrievalTrace = {
   top_k: number;
   max_score: number;
   latency_ms: number;
+  scoped_to?: string[];       // documents the question was limited to; empty = all
 };
 
 export type ChatMessage = {
@@ -31,6 +34,8 @@ export type ChatMessage = {
   citations?: Citation[];
   retrieval?: RetrievalTrace;
   timestamp?: number;
+  scope?: string[];           // user turn: documents it searched (empty = all)
+  scopedMiss?: string;        // assistant turn: the question the picked documents couldn't answer
 };
 
 interface ChatWindowProps {
@@ -39,9 +44,12 @@ interface ChatWindowProps {
   isLoading: boolean;
   onQuestionChange: (q: string) => void;
   onSend: (e: FormEvent) => void;
-  onAsk: (text: string) => void;
+  onAsk: (text: string, scope?: string[]) => void;
   onShare: (msg: ChatMessage) => Promise<string | null>;
   disabled: boolean;
+  docs: DocumentMeta[];
+  scope: string[];
+  onScopeChange: (next: string[]) => void;
 }
 
 function relativeTime(ts?: number): string {
@@ -193,8 +201,8 @@ function CopyButton({ text }: { text: string }) {
     <motion.button type="button" className="msg-action-btn" onClick={handleCopy} title="Copy" whileTap={{ scale: 0.8 }}>
       <AnimatePresence mode="wait">
         {copied
-          ? <motion.span key="check" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Check size={11} color="var(--green)" /></motion.span>
-          : <motion.span key="copy"  initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Copy size={11} /></motion.span>
+          ? <motion.span key="check" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.15 }}><Check size={11} color="var(--green)" /></motion.span>
+          : <motion.span key="copy"  initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.15 }}><Copy size={11} /></motion.span>
         }
       </AnimatePresence>
     </motion.button>
@@ -226,24 +234,38 @@ function ShareButton({ msg, onShare }: { msg: ChatMessage; onShare: (m: ChatMess
     >
       <AnimatePresence mode="wait">
         {state === "done"
-          ? <motion.span key="link"  initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Link size={11} color="var(--green)" /></motion.span>
+          ? <motion.span key="link"  initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.15 }}><Link size={11} color="var(--green)" /></motion.span>
           : state === "loading"
           ? <motion.span key="spin"  initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="share-spinner" />
-          : <motion.span key="share" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}><Share2 size={11} /></motion.span>
+          : <motion.span key="share" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.15 }}><Share2 size={11} /></motion.span>
         }
       </AnimatePresence>
     </motion.button>
   );
 }
 
+function scopeLabel(files: string[], docs: DocumentMeta[]): string {
+  const names = files.map((f) => {
+    const d = docs.find((x) => x.file_name === f);
+    return d ? docTitle(d) : f;
+  });
+  return names.length > 2 ? `${names.length} documents` : names.join(" and ");
+}
+
 function MessageBubble({
   msg,
   isNewest,
   onShare,
+  docs,
+  onAsk,
+  disabled,
 }: {
   msg: ChatMessage;
   isNewest: boolean;
   onShare: (m: ChatMessage) => Promise<string | null>;
+  docs: DocumentMeta[];
+  onAsk: (text: string, scope?: string[]) => void;
+  disabled: boolean;
 }) {
   const isUser = msg.role === "user";
   return (
@@ -275,6 +297,15 @@ function MessageBubble({
           <CopyButton text={msg.text} />
           {!isUser && <ShareButton msg={msg} onShare={onShare} />}
         </div>
+        {isUser && msg.scope && msg.scope.length > 0 && (
+          <span className="msg-scope"><Library size={11} aria-hidden="true" /> in {scopeLabel(msg.scope, docs)}</span>
+        )}
+        {!isUser && msg.scopedMiss && (
+          <button type="button" className="msg-search-all" disabled={disabled}
+            onClick={() => onAsk(msg.scopedMiss!, [])}>
+            Search all documents instead <ChevronRight size={12} aria-hidden="true" />
+          </button>
+        )}
       </div>
       {!isUser && msg.retrieval && <RetrievalTracePanel r={msg.retrieval} />}
       {msg.citations && msg.citations.length > 0 && (
@@ -338,6 +369,19 @@ const SUGGESTIONS = [
   { icon: BookOpen,   text: "What are the onboarding steps?" },
 ];
 
+// Starter questions: the picked documents' own questions, round-robin; otherwise the
+// first question of each document; otherwise generic prompts (older backends).
+function starterQuestions(docs: DocumentMeta[], scope: string[]): { text: string; icon: typeof FileText }[] {
+  const pool = (scope.length ? docs.filter((d) => scope.includes(d.file_name)) : docs)
+    .map((d) => d.questions ?? []).filter((q) => q.length);
+  const out: string[] = [];
+  for (let i = 0; out.length < 4 && pool.some((q) => q[i]); i++) {
+    pool.forEach((q) => { if (q[i] && out.length < 4 && !out.includes(q[i])) out.push(q[i]); });
+    if (!scope.length) break;          // unscoped: one per document is enough
+  }
+  return out.length ? out.map((text) => ({ text, icon: BookOpen })) : SUGGESTIONS;
+}
+
 export function ChatWindow({
   messages,
   question,
@@ -347,8 +391,21 @@ export function ChatWindow({
   onAsk,
   onShare,
   disabled,
+  docs,
+  scope,
+  onScopeChange,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const scopeBtnRef = useRef<HTMLButtonElement>(null);
+  const picked = scope.map((f) => docs.find((d) => d.file_name === f)).filter((d): d is DocumentMeta => !!d);
+  const suggestions = starterQuestions(docs, scope);
+  const scopeText = !picked.length ? "All documents" : picked.length === 1 ? docTitle(picked[0]) : `${picked.length} documents`;
+
+  function closePicker() {
+    setPickerOpen(false);
+    scopeBtnRef.current?.focus({ preventScroll: true });
+  }
   const assistantIdxs = messages.map((m, i) => ({ m, i })).filter(({ m }) => m.role === "assistant");
   const lastAssistantIdx = assistantIdxs.length > 0 ? assistantIdxs[assistantIdxs.length - 1].i : -1;
 
@@ -407,11 +464,13 @@ export function ChatWindow({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.22, duration: 0.3 }}
               >
-                Your knowledge base is ready. Try one of these:
+                {picked.length
+                  ? `Searching ${scopeText}. Try one of its questions:`
+                  : "Your knowledge base is ready. Try one of these:"}
               </motion.p>
 
               <div className="empty-suggestions">
-                {SUGGESTIONS.map((s, i) => {
+                {suggestions.map((s, i) => {
                   const Icon = s.icon;
                   return (
                     <motion.button
@@ -445,6 +504,9 @@ export function ChatWindow({
               msg={msg}
               isNewest={i === lastAssistantIdx}
               onShare={onShare}
+              docs={docs}
+              onAsk={onAsk}
+              disabled={disabled || isLoading}
             />
           ))}
         </AnimatePresence>
@@ -478,6 +540,65 @@ export function ChatWindow({
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Which documents the next question searches */}
+      {docs.length > 0 && (
+        <div className="scope-row">
+          <button
+            ref={scopeBtnRef}
+            type="button"
+            className="scope-btn"
+            aria-haspopup="dialog"
+            aria-expanded={pickerOpen}
+            onClick={() => (pickerOpen ? closePicker() : setPickerOpen(true))}
+            disabled={disabled}
+            aria-label={`Documents searched: ${scopeText}. Change`}
+          >
+            <span className="scope-stack" aria-hidden="true">
+              {(picked.length ? picked.slice(0, 3) : [null]).map((d, i) => (
+                <i key={d?.file_name ?? i} className={d ? `ft-${fileType(d.file_name)}` : "ft-all"}>
+                  {d ? fileType(d.file_name).charAt(0).toUpperCase() : ""}
+                </i>
+              ))}
+            </span>
+            <span className="scope-label">{scopeText}</span>
+            <ChevronDown size={12} className="scope-chev" aria-hidden="true" />
+          </button>
+          <AnimatePresence initial={false}>
+            {picked.map((d) => (
+              <motion.span
+                key={d.file_name}
+                className="tchip"
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1, transition: { duration: 0.2 } }}
+                exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.12 } }}
+                layout
+              >
+                <i className={`ft-${fileType(d.file_name)}`} aria-hidden="true" />
+                {docTitle(d)}
+                <button type="button" aria-label={`Stop searching ${docTitle(d)}`}
+                  onClick={() => onScopeChange(scope.filter((f) => f !== d.file_name))}>
+                  <X size={11} />
+                </button>
+              </motion.span>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      <DocumentPicker
+        open={pickerOpen}
+        docs={docs}
+        selected={scope}
+        onChange={onScopeChange}
+        onClose={closePicker}
+        onAsk={(q, file) => {
+          const next = scope.includes(file) ? scope : [...scope, file];
+          onScopeChange(next);
+          setPickerOpen(false);
+          onAsk(q, next);
+        }}
+      />
 
       {/* Input */}
       <motion.form

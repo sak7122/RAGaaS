@@ -1,8 +1,8 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { motion } from "framer-motion";
+import { MotionConfig, motion } from "framer-motion";
 import { LogOut, Sparkles } from "lucide-react";
-import { ToastPortal } from "./components/ui";
+import { ToastPortal, toast } from "./components/ui";
 import {
   devSignInTenant,
   signInWithPassword,
@@ -26,7 +26,21 @@ import { Privacy } from "./pages/Privacy";
 import { SharePage } from "./pages/SharePage";
 import { SolvePage } from "./pages/SolvePage";
 import { DEMO, demoFetch } from "./demoBackend";
+import { AUTH_ROUTES, MARKETING_ROUTES } from "./marketing/routes";
 import "./styles.css";
+
+// Public site, loaded only when a signed-out visitor (or a public page) needs it.
+const Marketing = lazy(() => import("./marketing/Marketing"));
+
+// Set while a Firebase session exists, so a returning user on "/" waits for the
+// session to restore instead of seeing the public home page flash first.
+const SESSION_HINT = "ragaas:session";
+function hasSessionHint(): boolean {
+  try { return localStorage.getItem(SESSION_HINT) === "1"; } catch { return false; }
+}
+function setSessionHint(on: boolean) {
+  try { if (on) localStorage.setItem(SESSION_HINT, "1"); else localStorage.removeItem(SESSION_HINT); } catch { /* */ }
+}
 
 const API          = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 const USE_EMULATOR = import.meta.env.VITE_FIREBASE_USE_EMULATOR === "true";
@@ -87,7 +101,9 @@ if (path === "/privacy") {
 } else if (path === "/solve") {
   createRoot(document.getElementById("root")!).render(<SolvePage />);
 } else {
-  createRoot(document.getElementById("root")!).render(<App />);
+  createRoot(document.getElementById("root")!).render(
+    <MotionConfig reducedMotion="user"><App /></MotionConfig>,
+  );
 }
 
 function App() {
@@ -101,17 +117,44 @@ function App() {
   const [isLoading, setIsLoading]     = useState(false);
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
+  const [refreshing, setRefreshing]   = useState<string | null>(null);
+  // Documents the next question searches (file names); empty = every document.
+  const [scope, setScope]             = useState<string[]>([]);
   const [members, setMembers]         = useState<Member[]>([]);
   const [view, setView]               = useState<"chat" | "insights" | "academy" | "integrations">("chat");
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
-  const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
+  const [authMode, setAuthMode]       = useState<"signin" | "signup">(
+    parseInviteParams() || window.location.pathname === AUTH_ROUTES.signup ? "signup" : "signin");
+  const [route, setRoute]             = useState(window.location.pathname);
   const [displayName, setDisplayName] = useState("");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
   const inviteRef                     = useRef(parseInviteParams());
   const [inviteInfo]                  = useState(inviteRef.current);
   const [inviteJoined, setInviteJoined] = useState<string | null>(null);
+
+  // Client-side navigation between the public pages, the auth forms and the app.
+  const navigate = useCallback((to: string) => {
+    const url = new URL(to, window.location.origin);
+    const next = url.pathname + url.search + url.hash;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.pushState({}, "", next);
+    }
+    if (url.pathname === AUTH_ROUTES.signup) setAuthMode("signup");
+    if (url.pathname === AUTH_ROUTES.signin) setAuthMode("signin");
+    setRoute(url.pathname);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      setRoute(window.location.pathname);
+      if (window.location.pathname === AUTH_ROUTES.signup) setAuthMode("signup");
+      if (window.location.pathname === AUTH_ROUTES.signin) setAuthMode("signin");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
@@ -130,6 +173,32 @@ function App() {
       if (membersRes.ok) setMembers(await membersRes.json());
     } catch { /* backend may be starting */ }
   }, []);
+
+  useEffect(() => {
+    setScope((prev) => {
+      const next = prev.filter((f) => docs.some((d) => d.file_name === f));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [docs]);
+
+  // Rebuild one document's summary and starter questions (Gemini in production).
+  async function handleRefreshProfile(fileName: string) {
+    setRefreshing(fileName);
+    try {
+      const res = await apiFetch(`${API}/api/documents/${encodeURIComponent(fileName)}/profile`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail ?? "Could not refresh the summary");
+      setDocs((prev) => prev.map((d) => (d.file_name === fileName ? { ...d, ...body } : d)));
+      toast("Summary and questions refreshed");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not refresh the summary", "error");
+    } finally {
+      setRefreshing(null);
+    }
+  }
 
   async function handleDelete(fileName: string) {
     setDeleting(fileName);
@@ -217,11 +286,12 @@ function App() {
     await sendMessage(question);
   }
 
-  async function sendMessage(raw: string) {
+  async function sendMessage(raw: string, scopeOverride?: string[]) {
     const text = raw.trim();
     if (!text || isLoading) return;
+    const files = scopeOverride ?? scope;
     setQuestion("");
-    const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now() }];
+    const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now(), scope: files }];
     setMessages(next);
     setIsLoading(true);
     try {
@@ -229,10 +299,12 @@ function App() {
       const res  = await apiFetch(`${API}/api/chat`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({ message: text, history, file_names: files.length ? files : null }),
       });
       const body = await res.json();
       const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
+      // Nothing cited inside the picked documents: offer to ask the whole workspace.
+      const scopedMiss = res.ok && files.length > 0 && (body.citations ?? []).length === 0 ? text : undefined;
       const updated: ChatMessage[] = [
         ...next,
         {
@@ -241,6 +313,7 @@ function App() {
           citations: body.citations ?? [],
           retrieval: body.retrieval,
           timestamp: Date.now(),
+          scopedMiss,
         },
       ];
       setMessages(updated);
@@ -310,6 +383,7 @@ function App() {
     if (USE_EMULATOR || DEMO) return;
     const unsub = watchAuth(async (user) => {
       setAuthReady(true);
+      setSessionHint(!!user);
       if (user) {
         const token = await user.getIdToken();
         currentUidRef.current = user.uid;
@@ -410,11 +484,32 @@ function App() {
     try { await signOutUser(); } catch { /* ignore */ }
     setView("chat");
     setMessages([]);
-  }, []);
+    navigate("/");
+  }, [navigate]);
 
   useEffect(() => {
     refreshStatus();
   }, [idToken, refreshStatus]);
+
+  useEffect(() => {
+    if (online && (route === AUTH_ROUTES.signin || route === AUTH_ROUTES.signup)) {
+      window.history.replaceState({}, "", "/");
+      setRoute("/");
+    }
+  }, [online, route]);
+
+  // ── Public site ──────────────────────────────────────────────────────────
+  // "/" is the home page when signed out and the app when signed in; the other
+  // public pages stay reachable either way. Invite links skip straight to sign-up.
+  const marketingPage = inviteInfo ? undefined : MARKETING_ROUTES[route];
+  const appAtRoot = USE_EMULATOR || DEMO || online || (!authReady && hasSessionHint());
+  if (marketingPage && (route !== "/" || !appAtRoot)) {
+    return (
+      <Suspense fallback={<div className="mk-loading" aria-busy="true" />}>
+        <Marketing page={marketingPage} signedIn={online} onNavigate={navigate} />
+      </Suspense>
+    );
+  }
 
   // ── Prod: restoring session (avoid login flash on reload) ───────────────
   if (!USE_EMULATOR && !DEMO && !authReady) {
@@ -435,7 +530,7 @@ function App() {
       <div className="shell">
         <ToastPortal />
         <nav className="global-nav">
-          <span className="nav-brand">RAGaaS</span>
+          <a className="nav-brand" href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }}>RAGaaS</a>
           <span className="nav-spacer" />
           <div className="nav-status">
             <span className="nav-dot offline" />
@@ -452,13 +547,13 @@ function App() {
           {authMode === "signup" ? (
             <SignUpForm
               onSignUp={handleSignUp}
-              onBackToSignIn={() => { setAuthMode("signin"); setAuthState("idle"); }}
+              onBackToSignIn={() => { navigate(AUTH_ROUTES.signin); setAuthState("idle"); }}
               error={STATUS_WORDS.has(authState) ? "" : authState}
             />
           ) : (
             <AuthForm
               onSignIn={handleSignIn}
-              onSwitchToSignUp={() => { setAuthMode("signup"); setAuthState("idle"); }}
+              onSwitchToSignUp={() => { navigate(AUTH_ROUTES.signup); setAuthState("idle"); }}
               error={STATUS_WORDS.has(authState) ? "" : authState}
             />
           )}
@@ -471,6 +566,9 @@ function App() {
   const currentUid = USE_EMULATOR
     ? `dev-${tenantEmail.replace("@ragaas.local", "").replace("@", "-")}`
     : currentUidRef.current;
+  // Admins and uploaders can rebuild document summaries (the backend checks too).
+  const myRole = USE_EMULATOR || DEMO ? "admin" : members.find((m) => m.uid === currentUid)?.role;
+  const canManageDocs = myRole === "admin" || myRole === "uploader";
 
   return (
     <div className="shell">
@@ -565,7 +663,14 @@ function App() {
           onRefresh={refreshStatus}
           extraSlot={
             <>
-              <DocumentList docs={docs} onDelete={handleDelete} deleting={deleting} />
+              <DocumentList
+                docs={docs}
+                onDelete={handleDelete}
+                deleting={deleting}
+                canManage={canManageDocs}
+                onRefreshProfile={handleRefreshProfile}
+                refreshing={refreshing}
+              />
               <MembersPanel
                 members={members}
                 currentUid={currentUid}
@@ -612,6 +717,9 @@ function App() {
                 onAsk={sendMessage}
                 onShare={handleShare}
                 disabled={!online}
+                docs={docs}
+                scope={scope}
+                onScopeChange={setScope}
               />
             </ErrorBoundary>
           </>

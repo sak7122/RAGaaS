@@ -1,0 +1,189 @@
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="/" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="/ask" aria-current="page">Ask</a>
+<a class="navlink" href="/gaps">Gaps</a>
+<a class="navlink" href="/academy">Academy</a>
+<a class="navlink" href="/access">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="/signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="#try">Try it</a>
+</div>
+</header>
+
+<main>
+<section class="flight" id="flight" aria-label="How a question is answered">
+<div class="stage">
+<canvas class="scene" id="scene" role="img" aria-label="A field of documents seen from above at night, each titled. Blue lines carry a question out to them, stop at a gate around three restricted documents, then narrow to three ranked matches: Sales playbook, Pricing sheet and CRM guide. Scrolling flies the camera down onto the Sales playbook, page 4, where the cited line lights up."></canvas>
+<div class="fallback" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<!-- labels pinned to scene positions by doc-flight.js -->
+<div class="tag plain" id="tag-origin" aria-hidden="true"><span class="tag-in">Your question</span></div>
+<div class="tag plain warn" id="tag-gate" aria-hidden="true"><span class="tag-in">3 restricted · never searched</span></div>
+<div class="tag r1" id="tag-1" aria-hidden="true"><span class="tag-in"><span class="tag-rank">1</span><span class="tag-dive">Diving into</span> Sales playbook <span class="tag-page">p. 4</span></span></div>
+<div class="tag" id="tag-2" aria-hidden="true"><span class="tag-in"><span class="tag-rank">2</span>Pricing sheet <span class="tag-page">p. 2</span></span></div>
+<div class="tag" id="tag-3" aria-hidden="true"><span class="tag-in"><span class="tag-rank">3</span>CRM guide <span class="tag-page">p. 7</span></span></div>
+
+<div class="hud" aria-live="polite">
+<span class="hud-i" data-b="0"><span class="hud-dot"></span>“Can I offer 20% off an annual plan?”</span>
+<span class="hud-i" data-b="1"><span class="hud-dot"></span>Searching 27 documents you can read</span>
+<span class="hud-i warn" data-b="2"><span class="hud-dot"></span>3 restricted documents skipped</span>
+<span class="hud-i" data-b="3"><span class="hud-dot"></span>3 passages ranked</span>
+<span class="hud-i" data-b="4"><span class="hud-dot"></span>Cited line highlighted</span>
+</div>
+
+<div class="cap" data-c="0">
+<p class="eyebrow">Ask</p>
+<h1 class="h1">Ask anything. See the line it came from.</h1>
+<p class="body">Your team asks in plain words. Every answer points to the exact document and page.</p>
+<div class="row-btns" style="margin-top:6px"><a class="pill pill-blue" href="#try">Try the demo <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost dark-ghost" href="#how" style="color:var(--blue-d);border-color:var(--blue-d)">How it answers</a></div>
+</div>
+<div class="cap glass" data-c="1"><p class="eyebrow"><span class="mono">01</span> · Search</p><h2 class="h2">Your question goes out to the documents.</h2><p class="body">It's matched by meaning against every document you're cleared to read.</p></div>
+<div class="cap glass" data-c="2"><p class="eyebrow" style="color:var(--orange)"><span class="mono">02</span> · Access</p><h2 class="h2">Restricted stays restricted.</h2><p class="body">Access is checked before the search. A document you aren't cleared for is never read, so it can't leak into an answer.</p></div>
+<div class="cap glass" data-c="3"><p class="eyebrow"><span class="mono">03</span> · Rank</p><h2 class="h2">The best passages, ranked.</h2><p class="body">Sales playbook, Pricing sheet and CRM guide come out on top. Only these can be used in the answer.</p></div>
+<div class="cap glass" data-c="4"><p class="eyebrow"><span class="mono">04</span> · Answer</p><h2 class="h2">Straight to the Sales playbook, page 4.</h2><p class="body">The cited line is one click away. If nothing answers, the question goes to Knowledge gaps.</p></div>
+
+<div class="answer-card" id="answer-card">
+<div class="bubble" style="font-size:14px">Can I offer 20% off an annual plan?</div>
+<p style="margin:0;font-size:15px;line-height:1.5">Only with the sales director's approval, logged in the CRM before you send the quote.</p>
+<span class="chip" style="align-self:flex-start;background:#1d1d1f;border-color:#424245;color:var(--blue-d)">Sales playbook, p. 4</span>
+</div>
+
+<div class="rail" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+<div class="hint" id="hint" aria-hidden="true">Scroll<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+</div>
+</section>
+
+<section id="try" class="parch sec">
+<div class="wide" style="display:flex;flex-direction:column;gap:40px">
+<div style="display:flex;flex-direction:column;gap:14px;max-width:640px">
+<p class="eyebrow" data-reveal>Try it</p>
+<h2 class="h2" data-split>Ask the demo workspace.</h2>
+<p class="body" data-reveal style="transition-delay:.15s">You're signed in as a new sales hire. Choose which documents to search, start from one of their questions or type your own, then open the source.</p>
+<p class="live-note" id="live-note" hidden></p>
+</div>
+<div class="app shadow" data-wipe>
+<aside class="side" aria-label="Recent questions">
+<button type="button" class="pill pill-blue pill-sm" id="new-chat" style="margin-bottom:12px">New question</button>
+<p style="margin:6px 10px;font-size:12px;font-weight:600;color:var(--muted)">Recent</p>
+<button type="button" class="recent is-on">Discount approvals</button>
+<button type="button" class="recent">Wifi password</button>
+<button type="button" class="recent">Parking</button>
+<span style="flex:1"></span>
+<div style="padding:10px;font-size:12px;line-height:1.45;color:var(--muted)">Acme workspace<br>27 of 30 documents searchable for you</div>
+</aside>
+<div class="main">
+<div class="bar">
+<p class="disp" style="margin:0;font-size:17px;font-weight:600">Ask</p>
+<span style="flex:1"></span>
+<button type="button" class="scope-btn" id="scope-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="picker">
+<span class="scope-stack" id="scope-stack" aria-hidden="true"></span><span id="scope-label">All documents</span>
+<svg class="scope-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+<span class="role">Sales hire</span>
+</div>
+<div class="thread" id="thread" aria-live="polite"></div>
+<form class="composer" id="composer">
+<div class="tray" id="tray" aria-label="Documents this question searches"></div>
+<div class="chips" id="chips"></div>
+<label class="field"><span class="sr">Your question</span>
+<input class="input" id="input" type="text" placeholder="Ask about your documents" autocomplete="off">
+<button type="submit" class="send" id="send" aria-label="Send" disabled><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+</label>
+</form>
+<section class="picker" id="picker" role="dialog" aria-modal="false" aria-labelledby="picker-title" hidden>
+<div class="picker-head">
+<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+<h3 class="disp" id="picker-title" style="margin:0;font-size:19px;font-weight:600">Choose documents to search</h3>
+<span class="picker-count mono" id="picker-count" aria-live="polite"></span>
+</div>
+<div class="picker-tools">
+<label class="pfield"><span class="sr">Filter documents</span>
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+<input type="search" id="picker-filter" placeholder="Filter by name, summary or question" autocomplete="off">
+</label>
+<button type="button" class="linkbtn" id="pick-all">Select all</button>
+<button type="button" class="linkbtn" id="pick-none">Clear</button>
+</div>
+</div>
+<div class="picker-grid" id="picker-grid"></div>
+<p class="picker-empty" id="picker-empty" hidden>No documents match that filter.</p>
+<div class="picker-foot">
+<p class="body" style="font-size:13px;flex:1" id="picker-note">Nothing selected searches every document you can read.</p>
+<button type="button" class="pill pill-blue pill-sm" id="picker-done">Done</button>
+</div>
+</section>
+</div>
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="Source">
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1"><p class="disp" id="src-doc" style="margin:0;font-size:19px;font-weight:600"></p><p id="src-meta" style="margin:2px 0 0;font-size:13px;color:var(--muted)"></p></div>
+<button type="button" class="icon-btn" id="close-drawer" aria-label="Close source"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+<div style="height:1px;background:var(--hair)"></div>
+<p class="excerpt" id="src-text"></p>
+<span style="flex:1"></span>
+<p style="margin:0;font-size:13px;color:var(--muted)">Version 3 · updated [DATE]</p>
+<a href="#try" style="font-size:15px">Open the full document</a>
+</aside>
+</div>
+</div>
+</section>
+
+<section id="how" class="dark pipe">
+<div class="pipe-pin">
+<div class="wide pipe-grid">
+<div style="display:flex;flex-direction:column;gap:24px">
+<p class="eyebrow">How an answer is built</p>
+<h2 class="h2">Four steps, every time.</h2>
+<div class="stages" id="stages">
+<div class="stg"><span class="stg-n">1</span><div><p class="h3" style="font-size:20px">Question</p><p class="body">Asked in plain words, by someone signed in to your workspace.</p></div></div>
+<div class="stg"><span class="stg-n">2</span><div><p class="h3" style="font-size:20px">Access check</p><p class="body">Their role decides which documents can be searched at all.</p></div></div>
+<div class="stg"><span class="stg-n">3</span><div><p class="h3" style="font-size:20px">Retrieve and rank</p><p class="body">Passages are scored by meaning; only the best few go forward.</p></div></div>
+<div class="stg"><span class="stg-n">4</span><div><p class="h3" style="font-size:20px">Answer with citations</p><p class="body">Written only from those passages, each claim linked to its page.</p></div></div>
+</div>
+</div>
+<div class="board" id="board" aria-hidden="true">
+<svg viewBox="0 0 100 95" preserveAspectRatio="none">
+<path class="wire" d="M16 16 H50 V38 M50 38 V58 M50 58 H84 V80"/>
+<path class="wire-on" id="wire-on" d="M16 16 H50 V38 M50 38 V58 M50 58 H84 V80" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/>
+</svg>
+<div class="node" style="left:16%;top:17%"><span class="node-box">“20% off an annual plan?”</span>Question</div>
+<div class="node warn" style="left:50%;top:40%"><span class="node-box">Sales hire · 27 of 30</span>Access check</div>
+<div class="node" style="left:50%;top:61%"><span class="node-box">Playbook · Pricing · CRM</span>Ranked passages</div>
+<div class="node" style="left:84%;top:84%"><span class="node-box">Answer + p. 4</span>Cited answer</div>
+<span class="packet" id="packet"></span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec" style="background:#fff">
+<div class="wide" style="display:flex;flex-direction:column;gap:48px">
+<h2 class="h2" data-split style="max-width:18ch">Built so nobody has to take it on trust.</h2>
+<div class="feats" data-stagger>
+<div class="feat dark"><span class="feat-ico" style="background:#1d1d1f"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2997ff" stroke-width="2" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 13h6"/></svg></span><p class="eyebrow">Cited</p><h3 class="h3">Every claim has a page.</h3><p class="body">Open the source and the exact line is highlighted.</p></div>
+<div class="feat tile-d"><span class="feat-ico" style="background:#1d1d1f"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff9f0a" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><p class="eyebrow" style="color:var(--orange)">Access-checked</p><h3 class="h3">Search what you're cleared for.</h3><p class="body">Restricted documents never reach the answer, lessons or tests.</p></div>
+<div class="feat parch"><span class="feat-ico" style="background:#fff"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0066cc" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/></svg></span><p class="eyebrow">Gaps captured</p><h3 class="h3">Unanswered isn't lost.</h3><p class="body">Questions no document answers are ranked in <a href="/gaps">Knowledge gaps</a>.</p></div>
+</div>
+</div>
+<div class="marquee" style="margin-top:72px" aria-label="Example documents">
+<div class="marquee-in">
+<span class="doc-pill">Company handbook</span><span class="doc-pill">Sales playbook</span><span class="doc-pill">Deploy runbook</span><span class="doc-pill">Expense policy</span><span class="doc-pill">Security basics</span><span class="doc-pill">Brand guide</span><span class="doc-pill">IT setup</span><span class="doc-pill">Benefits overview</span><span class="doc-pill">Incident playbook</span>
+<span class="doc-pill" aria-hidden="true">Company handbook</span><span class="doc-pill" aria-hidden="true">Sales playbook</span><span class="doc-pill" aria-hidden="true">Deploy runbook</span><span class="doc-pill" aria-hidden="true">Expense policy</span><span class="doc-pill" aria-hidden="true">Security basics</span><span class="doc-pill" aria-hidden="true">Brand guide</span><span class="doc-pill" aria-hidden="true">IT setup</span><span class="doc-pill" aria-hidden="true">Benefits overview</span><span class="doc-pill" aria-hidden="true">Incident playbook</span>
+</div>
+</div>
+</section>
+
+<section class="dark sec cta">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Stop answering the same question twice.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Upload one handbook and ask it anything. Your documents stay in your workspace and are never used to train a model.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="/">Back to overview</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span class="spacer" style="flex:1"></span><a href="/access">Privacy</a><a href="#try">Contact</a></div></footer>
