@@ -32,9 +32,10 @@ from backend.firebase_services import (
     verify_firebase_token,
 )
 from backend.storage import create_storage_backend
-from backend.index_store import create_index_store
+from backend.index_store import chunk_count, create_index_store
 from backend.rag import create_embedder, create_generator
-from backend.insights import create_insights_store
+from backend.doc_profile import SAMPLE_CHUNKS, build_profile, extractive_profile, profile_is_current
+from backend.insights import GAP_THRESHOLD, create_insights_store
 from backend.tenant_profile import create_tenant_profile_store, prettify
 from backend.mailer import send_invite_email, smtp_configured
 from backend.share_store import create_share_store
@@ -64,7 +65,7 @@ log = logging.getLogger("ragaas")
 DATA_DIR       = Path("local_data")
 UPLOAD_DIR     = DATA_DIR / "uploads"
 INDEX_FILE     = DATA_DIR / "index.json"
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # Cloud Run caps HTTP/1 request bodies at 32 MiB
 PDF_MAGIC      = b"%PDF"
 ZIP_MAGIC      = b"PK\x03\x04"  # docx is a zip container — disambiguate by extension
 VALID_ROLES    = {"admin", "uploader", "viewer"}
@@ -171,6 +172,8 @@ class TurnHistory(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     history: list[TurnHistory] = Field(default_factory=list, max_length=4)
+    # Documents picked in the Ask page; None or [] searches every document.
+    file_names: list[str] | None = Field(default=None, max_length=50)
 
 
 class Citation(BaseModel):
@@ -189,6 +192,7 @@ class RetrievalTrace(BaseModel):
     top_k: int                  # how many returned
     max_score: float            # best relevance score
     latency_ms: int             # retrieval time
+    scoped_to: list[str] = Field(default_factory=list)  # picked documents; empty = all
 
 
 class ChatResponse(BaseModel):
@@ -227,6 +231,12 @@ class DocumentMeta(BaseModel):
     file_name: str
     chunks: int
     uploaded_at: str
+    # Profile for the document picker (backend/doc_profile.py)
+    title: str = ""
+    pages: int = 0
+    summary: str = ""
+    questions: list[str] = Field(default_factory=list)
+    profile_source: str = ""    # "generated" (model) | "extractive"
 
 
 class QuestionStat(BaseModel):
@@ -445,8 +455,40 @@ def enforce_quota(tenant_id: str) -> int:
     return usage_store.increment_or_reject(tenant_id)
 
 
+def resolve_scope(tenant_id: str, file_names: list[str] | None) -> set[str] | None:
+    """Documents a request is limited to, or None for all. Names not in this tenant's
+    index are dropped (a picker can be stale after a delete); none left is a 400."""
+    if not file_names:
+        return None
+    known = {d["file_name"] for d in index_store.list_docs(tenant_id)}
+    scope = {safe_filename(f) for f in file_names} & known
+    if not scope:
+        raise HTTPException(status_code=400, detail="None of the selected documents are in this workspace.")
+    return scope
+
+
+def gather_candidates(tenant_id: str, search_query: str, scope: set[str] | None) -> list[dict]:
+    """Vector candidates, else every chunk for keyword scoring; both limited to scope."""
+    candidates: list[dict] = []
+    try:
+        q_vec = embedder.embed_query(search_query)
+        # A scoped search filters after the nearest-neighbour query, so ask for more.
+        candidates = index_store.vector_search(tenant_id, q_vec, k=30 if scope is None else 120)
+    except Exception as exc:
+        log.warning("vector search failed (%s); keyword fallback", exc)
+    if scope is not None:
+        candidates = [c for c in candidates if c["file_name"] in scope]
+    if not candidates:
+        pool = index_store.list_chunks(tenant_id)
+        if scope is not None:
+            pool = [c for c in pool if c["file_name"] in scope]
+        candidates = [{**c, "vec_score": 0.0} for c in pool]
+    return candidates
+
+
 def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
-                    history: list[dict] | None = None) -> list[dict]:
+                    history: list[dict] | None = None,
+                    scope: set[str] | None = None) -> list[dict]:
     """Tenant-scoped hybrid retrieval (vector + keyword), shared by the planner.
     Returns ranked chunks: [{file_name, page, chunk_index, text, score}, ...].
     Same scoring as /api/chat; isolation is enforced at index_store level."""
@@ -461,25 +503,7 @@ def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
     query_terms = tokenize(search_query)
     denom = max(len(query_terms), 1)
 
-    candidates: list[dict] = []
-    try:
-        q_vec = embedder.embed_query(search_query)
-        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
-    except Exception as exc:
-        log.warning("vector search failed (%s); keyword fallback", exc)
-
-    if not candidates:
-        for doc in index_store.list_docs(tenant_id):
-            chunks = doc.get("chunks") or [
-                {"page": i + 1, "chunk_index": 0, "text": p}
-                for i, p in enumerate(doc.get("pages", []))
-            ]
-            for ch in chunks:
-                candidates.append({
-                    "file_name": doc["file_name"], "page": ch.get("page", 1),
-                    "chunk_index": ch.get("chunk_index", 0),
-                    "text": ch.get("text", ""), "vec_score": 0.0,
-                })
+    candidates = gather_candidates(tenant_id, search_query, scope)
 
     ranked: list[tuple[float, dict]] = []
     for c in candidates:
@@ -548,17 +572,55 @@ def set_tenant_profile(
 
 
 # ── Routes: documents ─────────────────────────────────────────────────────────
+PROFILE_FIELDS = ("title", "pages", "summary", "questions", "profile_source")
+
+
+def document_meta(d: dict) -> DocumentMeta:
+    return DocumentMeta(
+        file_name=d["file_name"],
+        chunks=chunk_count(d),
+        uploaded_at=d["uploaded_at"],
+        **{k: d[k] for k in PROFILE_FIELDS if d.get(k) is not None},
+    )
+
+
+def ensure_profile(tenant_id: str, d: dict) -> dict:
+    """Backfill a profile for a document indexed before profiles existed (or with an older
+    extractive one). Extractive only, so listing never waits on a model;
+    POST /api/documents/{file}/profile upgrades it."""
+    if profile_is_current(d):
+        return d
+    profile = extractive_profile(d["file_name"], index_store.doc_chunks(tenant_id, d["file_name"], SAMPLE_CHUNKS))
+    profile["pages"] = max((int(c.get("page", 1)) for c in d.get("chunks", [])), default=0) or d.get("pages", 0)
+    try:
+        index_store.update_doc_meta(tenant_id, d["file_name"], profile)
+    except Exception as exc:  # still return it; the next listing retries the write
+        log.warning("profile backfill write failed tenant=%s file=%s: %s", tenant_id, d["file_name"], exc)
+    return {**d, **profile}
+
+
 @app.get("/api/documents", response_model=list[DocumentMeta])
 def list_documents(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[DocumentMeta]:
-    docs = index_store.list_docs(principal.tenant_id)
-    return [
-        DocumentMeta(
-            file_name=d["file_name"],
-            chunks=len(d.get("chunks", d.get("pages", []))),
-            uploaded_at=d["uploaded_at"],
-        )
-        for d in docs
-    ]
+    tenant_id = principal.tenant_id
+    return [document_meta(ensure_profile(tenant_id, d)) for d in index_store.list_docs(tenant_id)]
+
+
+@app.post("/api/documents/{file_name}/profile", response_model=DocumentMeta)
+def regenerate_profile(
+    file_name: str,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> DocumentMeta:
+    """Rebuild one document's summary and starter questions (with the model in prod)."""
+    require_role(principal, "admin", "uploader")
+    tenant_id = principal.tenant_id
+    safe_name = safe_filename(file_name)
+    doc = next((d for d in index_store.list_docs(tenant_id) if d["file_name"] == safe_name), None)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    profile = build_profile(safe_name, index_store.doc_chunks(tenant_id, safe_name, SAMPLE_CHUNKS * 4), generator)
+    index_store.update_doc_meta(tenant_id, safe_name, profile)
+    log.info("profile regenerated tenant=%s file=%s source=%s", tenant_id, safe_name, profile["profile_source"])
+    return document_meta({**doc, **profile})
 
 
 @app.delete("/api/documents/{file_name}")
@@ -589,11 +651,11 @@ async def upload_document(
 
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
+        raise HTTPException(status_code=413, detail="Upload exceeds 30 MB limit")
 
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
+        raise HTTPException(status_code=413, detail="Upload exceeds 30 MB limit")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename required")
 
@@ -607,7 +669,12 @@ async def upload_document(
         for c, v in zip(chunks, vectors):
             c["embedding"] = v
     except Exception as exc:
-        log.warning("embedding failed for %s (%s); stored without vectors", file_name, exc)
+        # Keyword fallback still works, but answer quality drops sharply: make it loud.
+        log.error("embedding failed for %s (%d chunks): %s; stored without vectors",
+                  file_name, len(chunks), exc)
+
+    # Summary + starter questions for the document picker; never fails the upload.
+    profile = build_profile(file_name, chunks, generator)
 
     index_store.upsert_doc(tenant_id, {
         "tenant_id": tenant_id,
@@ -615,21 +682,25 @@ async def upload_document(
         "storage_uri": uri,
         "chunks": chunks,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        **profile,
     })
-    log.info("upload tenant=%s file=%s chunks=%d uri=%s", tenant_id, file_name, len(chunks), uri)
-    return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks)}
+    log.info("upload tenant=%s file=%s chunks=%d uri=%s profile=%s",
+             tenant_id, file_name, len(chunks), uri, profile["profile_source"])
+    return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks),
+            "title": profile["title"], "summary": profile["summary"], "questions": profile["questions"]}
 
 
 # ── Routes: chat ──────────────────────────────────────────────────────────────
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> ChatResponse:
     tenant_id = principal.tenant_id
+    scope = resolve_scope(tenant_id, req.file_names)   # before the quota: a bad pick costs nothing
     queries_used = enforce_quota(tenant_id)
     history = [t.model_dump() for t in req.history]
 
     started = time.perf_counter()
     docs = index_store.list_docs(tenant_id)
-    total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
+    total_chunks = sum(chunk_count(d) for d in docs if scope is None or d["file_name"] in scope)
 
     # 1) Query rewriting — expand/resolve the question for better retrieval
     search_query = req.message
@@ -644,29 +715,8 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
     query_terms = tokenize(search_query)
     denom = max(len(query_terms), 1)
 
-    # 2) Vector retrieval (top candidates by cosine)
-    candidates: list[dict] = []
-    try:
-        q_vec = embedder.embed_query(search_query)
-        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
-    except Exception as exc:
-        log.warning("vector search failed (%s); keyword fallback", exc)
-
-    # 3) Fallback: if no embedded chunks, scan all chunks (keyword only)
-    if not candidates:
-        for doc in docs:
-            chunks = doc.get("chunks") or [
-                {"page": i + 1, "chunk_index": 0, "text": p}
-                for i, p in enumerate(doc.get("pages", []))
-            ]
-            for ch in chunks:
-                candidates.append({
-                    "file_name": doc["file_name"],
-                    "page": ch.get("page", 1),
-                    "chunk_index": ch.get("chunk_index", 0),
-                    "text": ch.get("text", ""),
-                    "vec_score": 0.0,
-                })
+    # 2-3) Vector candidates, else every chunk (keyword only); limited to picked documents
+    candidates = gather_candidates(tenant_id, search_query, scope)
 
     # 4) Hybrid score: blend cosine with keyword overlap
     ranked: list[tuple[float, dict]] = []
@@ -705,10 +755,14 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         top_k=len(citations),
         max_score=top[0][0] if top else 0.0,
         latency_ms=latency_ms,
+        scoped_to=sorted(scope or []),
     )
 
-    # Record for knowledge analytics + gap detection (answer stored when confidence is high)
-    insights_store.record(tenant_id, req.message, retrieval.max_score, answer=answer)
+    # Record for knowledge analytics + gap detection (answer stored when confidence is high).
+    # A miss inside a hand-picked subset says nothing about the whole knowledge base,
+    # so scoped questions only count once they're answered.
+    if scope is None or retrieval.max_score >= GAP_THRESHOLD:
+        insights_store.record(tenant_id, req.message, retrieval.max_score, answer=answer)
 
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
@@ -1067,7 +1121,7 @@ def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: 
     """Background task: run RAG and POST result to Slack response_url."""
     try:
         docs = index_store.list_docs(tenant_id)
-        total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
+        total_chunks = sum(chunk_count(d) for d in docs)
         if not docs:
             answer = "No documents have been uploaded to your knowledge base yet."
         else:
@@ -1089,17 +1143,7 @@ def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: 
                 pass
 
             if not candidates:
-                for doc in docs:
-                    chunks = doc.get("chunks") or [
-                        {"page": i + 1, "chunk_index": 0, "text": p}
-                        for i, p in enumerate(doc.get("pages", []))
-                    ]
-                    for ch in chunks:
-                        candidates.append({
-                            "file_name": doc["file_name"], "page": ch.get("page", 1),
-                            "chunk_index": ch.get("chunk_index", 0),
-                            "text": ch.get("text", ""), "vec_score": 0.0,
-                        })
+                candidates = [{**c, "vec_score": 0.0} for c in index_store.list_chunks(tenant_id)]
 
             ranked = []
             for c in candidates:

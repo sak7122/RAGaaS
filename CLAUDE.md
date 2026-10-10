@@ -106,7 +106,7 @@ Hard limit: **1,000 queries/tenant/day** in `FirestoreUsageStore` and `MemoryUsa
 
 ## Upload Constraints
 
-- PDF only, max 50 MB
+- PDF or .docx, max 30 MB (Cloud Run caps request bodies at 32 MiB)
 - Stored under `local_data/uploads/{tenant_id}/{filename}`
 - Tenant isolation at storage path AND index query level
 

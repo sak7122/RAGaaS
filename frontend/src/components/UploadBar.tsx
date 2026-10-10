@@ -32,13 +32,13 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete }: UploadBar
   useEffect(() => { tokenRef.current = authToken; }, [authToken]);
 
   function processFiles(files: File[]) {
-    const MAX_BYTES = 50 * 1024 * 1024;
+    const MAX_BYTES = 30 * 1024 * 1024;
     const ALLOWED = [".pdf", ".docx"];
     const newItems: QueueItem[] = files.slice(0, 10).map((file) => {
       if (!ALLOWED.some((ext) => file.name.toLowerCase().endsWith(ext)))
         return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "PDF or .docx only" };
       if (file.size > MAX_BYTES)
-        return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "Exceeds 50 MB" };
+        return { id: uid(), file, status: "error" as FileStatus, progress: 0, error: "Exceeds 30 MB" };
       return { id: uid(), file, status: "queued" as FileStatus, progress: 0 };
     });
     setQueue((q) => [...q.filter((i) => i.status !== "done"), ...newItems]);
@@ -152,7 +152,7 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete }: UploadBar
         />
 
         <span className="upload-zone-hint">
-          or drag &amp; drop · PDF or Word (.docx) · max 50 MB · up to 10 files
+          or drag &amp; drop · PDF or Word (.docx) · max 30 MB · up to 10 files
         </span>
 
         <AnimatePresence>
