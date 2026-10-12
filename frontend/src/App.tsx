@@ -26,7 +26,7 @@ import { Privacy } from "./pages/Privacy";
 import { SharePage } from "./pages/SharePage";
 import { SolvePage } from "./pages/SolvePage";
 import { DEMO, demoFetch } from "./demoBackend";
-import { AUTH_ROUTES, MARKETING_ROUTES } from "./marketing/routes";
+import { AUTH_ROUTES, matchMarketing } from "./marketing/routes";
 import "./styles.css";
 
 // Public site, loaded only when a signed-out visitor (or a public page) needs it.
@@ -501,12 +501,12 @@ function App() {
   // ── Public site ──────────────────────────────────────────────────────────
   // "/" is the home page when signed out and the app when signed in; the other
   // public pages stay reachable either way. Invite links skip straight to sign-up.
-  const marketingPage = inviteInfo ? undefined : MARKETING_ROUTES[route];
+  const marketingPage = inviteInfo ? undefined : matchMarketing(route);
   const appAtRoot = USE_EMULATOR || DEMO || online || (!authReady && hasSessionHint());
   if (marketingPage && (route !== "/" || !appAtRoot)) {
     return (
       <Suspense fallback={<div className="mk-loading" aria-busy="true" />}>
-        <Marketing page={marketingPage} signedIn={online} onNavigate={navigate} />
+        <Marketing page={marketingPage.page} slug={marketingPage.slug} signedIn={online} onNavigate={navigate} />
       </Suspense>
     );
   }

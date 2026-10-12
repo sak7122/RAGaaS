@@ -15,8 +15,10 @@ RAGaaS/
 │   │   ├── App.tsx            # Shell — auth, chat, upload orchestration
 │   │   ├── firebase.ts        # Firebase Auth SDK (emulator or prod via VITE_ vars)
 │   │   ├── styles.css         # Apple design system (DESIGN.md tokens)
-│   │   ├── marketing/         # Public site shown before sign-in (/, /ask, /gaps, /academy, /access):
-│   │   │                      #   pages/*.html markup + pages/*.ts DOM modules ported from design/proto,
+│   │   ├── marketing/         # Public site shown before sign-in:
+│   │   │                      #   home/ = React homepage (/) + industry pages (/for/<slug>), journey scene,
+│   │   │                      #     in-browser "try your document" (pdf.js, lazy); data from design/examples/companies.json
+│   │   │                      #   pages/*.html + pages/*.ts = /ask, /gaps, /academy, /access ported from design/proto,
 │   │   │                      #   marketing.css scoped under .mk, flight.ts = three.js Ask hero (lazy)
 │   │   └── components/
 │   │       ├── Sidebar.tsx    # Tenant select, auth chip, stats, quota bar

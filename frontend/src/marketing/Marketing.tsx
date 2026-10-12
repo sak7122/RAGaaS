@@ -1,17 +1,18 @@
-// Public site (Direction B): Home, Ask, Gaps, Academy and Access, shown before sign-in.
-// Each page is static markup ported from design/proto plus a small DOM module that
-// runs on mount and is fully undone on unmount (see life.ts). Loaded lazily, so the
-// signed-in app never downloads it, and three.js loads only on the Ask page.
+// Public site (Direction B), shown before sign-in. The homepage and the /for/<industry>
+// pages are React (marketing/home). Ask, Gaps, Academy and Access are static markup ported
+// from design/proto plus a small DOM module that runs on mount and is fully undone on
+// unmount (see life.ts). Loaded lazily, so the signed-in app never downloads it, and
+// three.js loads only on the Ask page.
 import { MouseEvent, useLayoutEffect, useRef } from "react";
+import HomePage from "./home/HomePage";
+import IndustryPage from "./home/IndustryPage";
 import "./marketing.css";
 import { createLife, reducedMotion } from "./life";
 import { initMotion } from "./motion";
-import homeHtml from "./pages/home.html?raw";
 import askHtml from "./pages/ask.html?raw";
 import gapsHtml from "./pages/gaps.html?raw";
 import academyHtml from "./pages/academy.html?raw";
 import accessHtml from "./pages/access.html?raw";
-import * as home from "./pages/home";
 import * as ask from "./pages/ask";
 import * as gaps from "./pages/gaps";
 import * as academy from "./pages/academy";
@@ -24,8 +25,9 @@ type PageModule = {
   init: (root: HTMLElement, life: ReturnType<typeof createLife>, m: ReturnType<typeof initMotion>) => void;
 };
 
-const PAGES: Record<MarketingPage, { html: string; mod: PageModule; title: string }> = {
-  home:    { html: homeHtml,    mod: home,    title: "RAGaaS · Your docs, answering back" },
+type StaticPage = Exclude<MarketingPage, "home" | "industry">;
+
+const PAGES: Record<StaticPage, { html: string; mod: PageModule; title: string }> = {
   ask:     { html: askHtml,     mod: ask,     title: "Ask · RAGaaS" },
   gaps:    { html: gapsHtml,    mod: gaps,    title: "Knowledge gaps · RAGaaS" },
   academy: { html: academyHtml, mod: academy, title: "Academy · RAGaaS" },
@@ -34,15 +36,18 @@ const PAGES: Record<MarketingPage, { html: string; mod: PageModule; title: strin
 
 interface MarketingProps {
   page: MarketingPage;
+  slug?: string;
   signedIn: boolean;
   onNavigate: (path: string) => void;
 }
 
-export default function Marketing({ page, signedIn, onNavigate }: MarketingProps) {
+export default function Marketing({ page, slug, signedIn, onNavigate }: MarketingProps) {
+  if (page === "home") return <HomePage signedIn={signedIn} onNavigate={onNavigate} />;
+  if (page === "industry") return <IndustryPage key={slug} slug={slug ?? ""} onNavigate={onNavigate} />;
   return <MarketingPageView key={`${page}:${signedIn}`} page={page} signedIn={signedIn} onNavigate={onNavigate} />;
 }
 
-function MarketingPageView({ page, signedIn, onNavigate }: MarketingProps) {
+function MarketingPageView({ page, signedIn, onNavigate }: { page: StaticPage; signedIn: boolean; onNavigate: (path: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const { html, mod, title } = PAGES[page];
 
