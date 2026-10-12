@@ -77,13 +77,27 @@ type Status = {
   documents: number;
 };
 
+// Error bodies used to be saved as message text (a list from a 422); coerce on load
+// so an old bad entry can't crash the chat.
 function loadChatHistory(tenantEmail: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`ragaas:chat:${tenantEmail}`);
-    return raw ? JSON.parse(raw) : [];
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+      .map((m) => ({ ...m, text: typeof m.text === "string" ? m.text : "Something went wrong with this message." }));
   } catch {
     return [];
   }
+}
+
+// FastAPI errors carry `detail` as a string, or as a list of validation issues.
+function errorText(body: { detail?: unknown } | null, status: number): string {
+  const d = body?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d) && d.length && typeof d[0]?.msg === "string") return `Request rejected: ${d[0].msg}`;
+  return `Something went wrong (HTTP ${status}).`;
 }
 
 function saveChatHistory(tenantEmail: string, messages: ChatMessage[]) {
@@ -295,14 +309,14 @@ function App() {
     setMessages(next);
     setIsLoading(true);
     try {
-      const history = messages.slice(-4).map((m) => ({ role: m.role, text: m.text }));
+      const history = messages.slice(-4).map((m) => ({ role: m.role, text: String(m.text ?? "").slice(0, 2000) }));
       const res  = await apiFetch(`${API}/api/chat`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, history, file_names: files.length ? files : null }),
       });
       const body = await res.json();
-      const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
+      const answer = res.ok && typeof body.answer === "string" ? body.answer : errorText(body, res.status);
       // Nothing cited inside the picked documents: offer to ask the whole workspace.
       const scopedMiss = res.ok && files.length > 0 && (body.citations ?? []).length === 0 ? text : undefined;
       const updated: ChatMessage[] = [

@@ -4,6 +4,8 @@ export type MarketingPage = "home" | "ask" | "gaps" | "academy" | "access" | "in
 
 export const MARKETING_ROUTES: Record<string, MarketingPage> = {
   "/": "home", "/ask": "ask", "/gaps": "gaps", "/academy": "academy", "/access": "access",
+  // "/" is the app once signed in; /home always shows the public homepage.
+  "/home": "home",
 };
 
 // /for/<industry> pages; slugs match design/examples/companies.json.

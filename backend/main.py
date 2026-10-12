@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 from docx import Document
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -164,9 +164,19 @@ log.info("startup env=%s emulator=%s embedder=%s generator=%s planner=%s tools=%
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
+HISTORY_TURN_CHARS = 2000
+
+
 class TurnHistory(BaseModel):
     role: str   # "user" or "assistant"
-    text: str = Field(max_length=2000)
+    text: str
+
+    # Answers often run past 2,000 characters; rejecting them made every later
+    # question fail with a 422. Only the start of a turn matters for context.
+    @field_validator("text")
+    @classmethod
+    def _clip(cls, v: str) -> str:
+        return v[:HISTORY_TURN_CHARS]
 
 
 class ChatRequest(BaseModel):

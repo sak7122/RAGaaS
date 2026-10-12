@@ -58,3 +58,15 @@ def test_earlier_refusals_are_left_out_of_history() -> None:
     assert all("find" not in t["text"] for t in kept if t["role"] == "assistant")
     assert kept[-1]["text"].startswith("A quorum")
     assert len(kept) <= 4
+
+
+def test_long_previous_answer_in_history_is_accepted() -> None:
+    # Gemini answers often exceed 2,000 characters; sending one back as history
+    # used to fail validation (422) and crash the chat UI.
+    long_answer = "Quorum consensus. " * 300
+    res = client.post("/api/chat", headers=HEADERS, json={
+        "message": "and vector clocks?",
+        "history": [{"role": "user", "text": "explain quorum"}, {"role": "assistant", "text": long_answer}],
+    })
+    assert res.status_code == 200, res.text
+    assert isinstance(res.json()["answer"], str)
