@@ -1,11 +1,13 @@
 // Academy learner app (M3): today's plan → lesson → test → graded feedback.
 // Backend: /api/academy/learn/* (answers are only ever revealed after submitting).
-import { FormEvent, Ref, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, Ref, RefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Award, CircleCheck, CircleX, Clock, Download, MessageCircleQuestion, Repeat, RotateCcw,
-  TriangleAlert,
+  ArrowLeft, ArrowRight, Award, BookOpen, CircleCheck, CircleX, Clock, Download, MessageCircleQuestion,
+  Repeat, RotateCcw, TriangleAlert,
 } from "lucide-react";
 import { Markdown, Notice, downloadFile, readError } from "./academyShared";
+import { AnimatePresence, motion, useScroll, useSpring } from "framer-motion";
+import { CountUp, EASE_OUT, Ring, rise } from "./academyMotion";
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
 type Source = { doc_id: string; title: string };
@@ -88,7 +90,7 @@ export function LearnerView({ api }: { api: Api }) {
   if (!plan) {
     return (
       <div className="acad-section">
-        {error ? <Notice kind="error">{error}</Notice> : <p className="acad-muted">Loading your plan…</p>}
+        {error ? <Notice kind="error">{error}</Notice> : <div className="acx-skel" aria-label="Loading your plan"><i /><i /><i /></div>}
       </div>
     );
   }
@@ -103,15 +105,28 @@ export function LearnerView({ api }: { api: Api }) {
       )}
       {error && <Notice kind="error" onClose={() => setError("")}>{error}</Notice>}
 
-      <section className="acad-card" aria-labelledby="learn-today-h">
+      <PlanSummary plan={plan} />
+
+      <motion.section className="acad-card acx-today" aria-labelledby="learn-today-h" {...rise(0, 0.05)}>
         <div className="learn-card-head">
           <h3 className="acad-h3" id="learn-today-h">Today</h3>
           {plan.today.length > 0 && <span className="acad-count"><Clock size={12} aria-hidden="true" /> about {plan.today_minutes} min</span>}
           {plan.reviews_due > 0 && <span className="learn-kind is-review">{plan.reviews_due} review{plan.reviews_due > 1 ? "s" : ""} due</span>}
         </div>
-        {plan.today.length > 0 ? (
+        {plan.today.length > 0 && (
+          <button type="button" className="acx-up-next" onClick={() => setModuleId(plan.today[0].module_id)}>
+            <span className="acx-up-ico" aria-hidden="true">{plan.today[0].kind === "review" ? <Repeat size={20} /> : <BookOpen size={20} />}</span>
+            <span className="learn-task-main">
+              <span className="acx-up-k">{plan.today[0].kind === "review" ? "Review" : "Up next"} · ~{plan.today[0].est_minutes} min</span>
+              <span className="acx-up-t">{plan.today[0].module_title}</span>
+              <span className="acad-muted acad-small">{plan.today[0].path_title}</span>
+            </span>
+            <span className="acx-up-go">Start <ArrowRight size={15} aria-hidden="true" /></span>
+          </button>
+        )}
+        {plan.today.length > 1 ? (
           <ol className="learn-today">
-            {plan.today.map((e) => (
+            {plan.today.slice(1).map((e) => (
               <li key={`${e.kind}-${e.module_id}`}>
                 <button type="button" className="learn-task" onClick={() => setModuleId(e.module_id)}>
                   <span className={`learn-kind is-${e.kind}`}>
@@ -127,7 +142,7 @@ export function LearnerView({ api }: { api: Api }) {
               </li>
             ))}
           </ol>
-        ) : plan.paths.length > 0 ? (
+        ) : plan.today.length === 1 ? null : plan.paths.length > 0 ? (
           <p className="acad-empty">You're all caught up. Reviews will show up here when they're due.</p>
         ) : (
           <p className="acad-empty">
@@ -135,10 +150,10 @@ export function LearnerView({ api }: { api: Api }) {
             can ask questions about company documents in Chat.
           </p>
         )}
-      </section>
+      </motion.section>
 
-      {plan.paths.map((p) => (
-        <PathCard key={p.id} path={p} onOpen={setModuleId} preview={plan.preview}
+      {plan.paths.map((p, i) => (
+        <PathCard key={p.id} i={i} path={p} onOpen={setModuleId} preview={plan.preview}
                   onCertificate={async () => {
                     const err = await downloadFile(api, `/api/academy/learn/paths/${p.id}/certificate`, "certificate.pdf");
                     if (err) setError(err);
@@ -155,14 +170,18 @@ export function LearnerView({ api }: { api: Api }) {
   );
 }
 
-function PathCard({ path, onOpen, onCertificate, preview }: {
-  path: LearnPath; onOpen: (id: string) => void; onCertificate: () => void; preview: boolean;
+function PathCard({ path, onOpen, onCertificate, preview, i }: {
+  path: LearnPath; onOpen: (id: string) => void; onCertificate: () => void; preview: boolean; i: number;
 }) {
   const share = path.modules_total ? path.modules_passed / path.modules_total : 0;
   const done = path.status === "passed" || path.status === "certified";
+  const current = path.modules.find((m) => !m.passed)?.id;
   return (
-    <section className="acad-card" aria-label={path.title}>
+    <motion.section className="acad-card acx-path" aria-label={path.title} {...rise(i, 0.12)}>
       <div className="learn-card-head">
+        <Ring value={share} size={46} stroke={4} tone={done ? "green" : "blue"}>
+          <span className="acx-ring-n">{Math.round(share * 100)}%</span>
+        </Ring>
         <h3 className="acad-h3">{path.title}</h3>
         <span className={`acad-badge${done ? " is-published" : ""}`}>{STATUS_LABEL[path.status]}</span>
         {path.overdue ? (
@@ -177,10 +196,11 @@ function PathCard({ path, onOpen, onCertificate, preview }: {
       </div>
       <div className="learn-bar" role="progressbar" aria-label={`${path.title} progress`}
            aria-valuemin={0} aria-valuemax={path.modules_total} aria-valuenow={path.modules_passed}>
-        <span style={{ width: `${share * 100}%` }} />
+        <motion.span initial={{ transform: "scaleX(0)" }}
+          animate={{ transform: `scaleX(${share})`, transition: { duration: 0.9, ease: EASE_OUT, delay: 0.2 } }} />
       </div>
       {path.status === "certified" && (
-        <div className="learn-cert">
+        <div className="learn-cert acx-cert">
           <Award size={18} aria-hidden="true" />
           <span className="learn-task-main">
             <span className="acad-strong">You're certified</span>
@@ -194,11 +214,11 @@ function PathCard({ path, onOpen, onCertificate, preview }: {
       {path.status === "passed" && !preview && (
         <p className="acad-help">All lessons passed. Your manager signs off next, then your certificate appears here.</p>
       )}
-      <ol className="learn-modules">
-        {path.modules.map((m) => (
-          <li key={m.id}>
+      <ol className="learn-modules acx-timeline">
+        {path.modules.map((m, k) => (
+          <motion.li key={m.id} className={m.passed ? "is-done" : m.id === current ? "is-current" : ""} {...rise(k, 0.2)}>
             <button type="button" className="learn-module-row" onClick={() => onOpen(m.id)}>
-              <span className={`learn-step${m.passed ? " is-done" : ""}`} aria-hidden="true">
+              <span className={`learn-step${m.passed ? " is-done" : ""}${m.id === current ? " is-current" : ""}`} aria-hidden="true">
                 {m.passed ? <CircleCheck size={18} /> : m.position}
               </span>
               <span className="learn-task-main">
@@ -210,13 +230,46 @@ function PathCard({ path, onOpen, onCertificate, preview }: {
                 </span>
               </span>
               <span className="sr-only">{m.passed ? "Completed" : "Not completed"}</span>
+              {m.id === current && <span className="acx-now">Next</span>}
               <ArrowRight size={16} aria-hidden="true" className="learn-task-arrow" />
             </button>
-          </li>
+          </motion.li>
         ))}
       </ol>
-    </section>
+    </motion.section>
   );
+}
+
+function PlanSummary({ plan }: { plan: Plan }) {
+  const total = plan.paths.reduce((a, p) => a + p.modules_total, 0);
+  const passed = plan.paths.reduce((a, p) => a + p.modules_passed, 0);
+  const certified = plan.paths.filter((p) => p.status === "certified").length;
+  if (!plan.paths.length) return null;
+  return (
+    <motion.div className="acx-summary" {...rise(0)}>
+      <Ring value={total ? passed / total : 0} size={72} stroke={6} label={`${passed} of ${total} lessons complete`}>
+        <span className="acx-ring-n big"><CountUp value={total ? (passed / total) * 100 : 0} format={(n) => `${Math.round(n)}%`} /></span>
+      </Ring>
+      <div className="acx-summary-stats">
+        <span><b><CountUp value={passed} /></b> of {total} lessons done</span>
+        <span><b><CountUp value={plan.paths.length} /></b> path{plan.paths.length === 1 ? "" : "s"}</span>
+        <span><b><CountUp value={certified} /></b> certified</span>
+        {plan.today_minutes > 0 && <span className="acx-streak"><Clock size={14} aria-hidden="true" /> {plan.today_minutes} min today</span>}
+      </div>
+    </motion.div>
+  );
+}
+
+/** A thin bar pinned to the top of the lesson showing how far you've read. */
+function ReadingProgress({ target }: { target: RefObject<HTMLElement | null> }) {
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+  useEffect(() => { setContainer(target.current?.closest(".acad") as HTMLElement | null); }, [target]);
+  return container ? <ReadingBar container={container} /> : null;
+}
+function ReadingBar({ container }: { container: HTMLElement }) {
+  const { scrollYProgress } = useScroll({ container: { current: container } });
+  const x = useSpring(scrollYProgress, { stiffness: 300, damping: 40 });
+  return <motion.div className="acx-readbar" style={{ scaleX: x }} aria-hidden="true" />;
 }
 
 // ── Lesson + test ─────────────────────────────────────────────────────────────
@@ -294,6 +347,7 @@ function ModuleView({ api, moduleId, onBack, onOpen, onSubmitted }: {
 
   return (
     <div className="acad-section learn-lesson">
+      <ReadingProgress target={titleRef} />
       {back}
       <header className="learn-lesson-head">
         <p className="acad-muted acad-small">{mod.path_title} · Lesson {mod.position}</p>
@@ -306,10 +360,10 @@ function ModuleView({ api, moduleId, onBack, onOpen, onSubmitted }: {
         </p>
       </header>
 
-      <article className="acad-card">
+      <motion.article className="acad-card acx-lesson" {...rise(0, 0.05)}>
         <Markdown text={mod.lesson_md} />
         {mod.sources.length > 0 && <p className="acad-sources">From: {sourceTitles(mod.sources)}</p>}
-      </article>
+      </motion.article>
 
       <AskBox api={api} />
 
@@ -320,6 +374,9 @@ function ModuleView({ api, moduleId, onBack, onOpen, onSubmitted }: {
             <span className="acad-muted acad-small">
               {mod.items.length} question{mod.items.length === 1 ? "" : "s"} · pass mark {pct(mod.pass_mark)}
             </span>
+          </div>
+          <div className="acx-answered" aria-hidden="true">
+            {mod.items.map((it) => <i key={it.id} className={hasAnswer(answers[it.id]) ? "on" : ""} />)}
           </div>
           <ol className="learn-qs">
             {mod.items.map((it, i) => (
@@ -369,9 +426,10 @@ function Question({ item, index, value, result, disabled, onChange }: {
   disabled: boolean; onChange: (v: Answer) => void;
 }) {
   const name = `q-${item.id}`;
-  const choice = (key: string, label: string, v: number | boolean) => (
+  const choice = (key: string, label: string, v: number | boolean, letter: string) => (
     <label key={key} className={`learn-choice${result && result.correct_answer === v ? " is-answer" : ""}`}>
       <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} />
+      <span className="acx-letter" aria-hidden="true">{letter}</span>
       <span>{label}</span>
     </label>
   );
@@ -388,10 +446,10 @@ function Question({ item, index, value, result, disabled, onChange }: {
           </span>
         </legend>
         {item.type === "mcq" && item.options ? (
-          <div className="learn-choices">{item.options.map((o, i) => choice(String(i), o, i))}</div>
+          <div className="learn-choices">{item.options.map((o, i) => choice(String(i), o, i, String.fromCharCode(65 + i)))}</div>
         ) : item.type === "true_false" ? (
           <div className="learn-choices learn-choices-row">
-            {choice("t", "True", true)}{choice("f", "False", false)}
+            {choice("t", "True", true, "T")}{choice("f", "False", false, "F")}
           </div>
         ) : (
           <>
@@ -403,7 +461,13 @@ function Question({ item, index, value, result, disabled, onChange }: {
           </>
         )}
       </fieldset>
-      {result && <Feedback item={item} result={result} />}
+      <AnimatePresence>
+        {result && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto", transition: { duration: 0.35, ease: EASE_OUT, delay: index * 0.08 } }}>
+            <Feedback item={item} result={result} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </li>
   );
 }
@@ -439,8 +503,15 @@ function ResultSummary({ ref, result, currentId, currentPosition, onRetake, onOp
     ?? mods.find((m) => !m.passed && m.id !== currentId)
     ?? mods.find((m) => m.position > currentPosition);
   return (
-    <div className={`learn-result ${result.passed ? "is-pass" : "is-fail"}`} ref={ref} tabIndex={-1} role="status">
-      <p className="learn-score">{pct(result.score)}</p>
+    <motion.div className={`learn-result ${result.passed ? "is-pass" : "is-fail"}`} ref={ref} tabIndex={-1} role="status"
+      initial={{ opacity: 0, transform: "translateY(12px) scale(.98)" }}
+      animate={{ opacity: 1, transform: "translateY(0px) scale(1)", transition: { duration: 0.45, ease: EASE_OUT } }}>
+      <span className="acx-score">
+        {result.passed && <span className="acx-burst" aria-hidden="true">{Array.from({ length: 12 }, (_, k) => <i key={k} style={{ ["--a" as string]: `${k * 30}deg` }} />)}</span>}
+        <Ring value={result.score} size={84} stroke={7} tone={result.passed ? "green" : "orange"}>
+          <span className="learn-score"><CountUp value={result.score * 100} format={(n) => `${Math.round(n)}%`} /></span>
+        </Ring>
+      </span>
       <div className="learn-result-body">
         <p className="acad-strong">
           {result.passed ? "Passed" : `Not passed yet. You need ${pct(result.pass_mark)}.`}
@@ -464,7 +535,7 @@ function ResultSummary({ ref, result, currentId, currentPosition, onRetake, onOp
           <button type="button" className="authx-link" onClick={onBack}>Back to your plan</button>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 

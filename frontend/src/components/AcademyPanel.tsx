@@ -4,6 +4,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { LearnerView } from "./LearnerView";
 import { ProgressDashboard } from "./ProgressDashboard";
 import { Markdown, Notice, readError } from "./academyShared";
+import { DEMO, demoFetch } from "../demoBackend";
+import { AnimatePresence, motion } from "framer-motion";
+import { BarChart3, Eye, Library, Route, Users } from "lucide-react";
+import { EASE_OUT } from "./academyMotion";
+import "./academy.css";
 
 interface Props {
   apiUrl: string;
@@ -717,6 +722,11 @@ function Paths({ api, docs, focusId, onFocused }: {
   );
 }
 
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function AcademyPanel({ apiUrl, authHeaders }: Props) {
   const [section, setSection] = useState<Section>("progress");
@@ -731,7 +741,7 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
   const headersRef = useRef(authHeaders);
   headersRef.current = authHeaders;
   const api = useCallback((path: string, init: RequestInit = {}) =>
-    fetch(`${apiUrl}${path}`, { ...init, headers: { ...headersRef.current(), ...(init.headers ?? {}) } }),
+    (DEMO ? demoFetch : fetch)(`${apiUrl}${path}`, { ...init, headers: { ...headersRef.current(), ...(init.headers ?? {}) } }),
   [apiUrl]);
 
   const loadDocs = useCallback(async () => {
@@ -751,10 +761,10 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
     })();
   }, [api, loadDocs]);
 
-  if (enabled === null) return <div className="acad"><p className="acad-muted">Loading Academy…</p></div>;
+  if (enabled === null) return <div className="acad acx"><div className="acx-skel" aria-label="Loading Academy"><i /><i /><i /></div></div>;
   if (!enabled) {
     return (
-      <div className="acad">
+      <div className="acad acx">
         <div className="acad-card acad-off">
           <h2 className="acad-h2">Academy isn't switched on for this workspace</h2>
           <p className="acad-muted">Academy turns your documents into onboarding paths with tests. Ask your RAGaaS contact to enable it.</p>
@@ -765,38 +775,71 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
 
   if (!isAdmin) {
     return (
-      <div className="acad">
-        <header className="acad-header"><h2 className="acad-h2">Your onboarding</h2></header>
+      <div className="acad acx">
+        <header className="acx-hero">
+          <div className="acx-hero-text">
+            <motion.p className="acx-eyebrow" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>Academy</motion.p>
+            <motion.h2 className="acad-h2 acx-title" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.06, ease: EASE_OUT, duration: 0.5 } }}>
+              {greeting()}. Here's your onboarding.
+            </motion.h2>
+          </div>
+        </header>
         <LearnerView api={api} />
       </div>
     );
   }
 
-  const tabs: { id: Section; label: string }[] = [
-    { id: "progress", label: "Progress" },
-    { id: "kb", label: "Knowledge base" }, { id: "learners", label: "Learners" }, { id: "paths", label: "Learning paths" },
-    { id: "learn", label: "Learner preview" },
+  const tabs: { id: Section; label: string; icon: typeof Users; blurb: string }[] = [
+    { id: "progress", label: "Progress", icon: BarChart3, blurb: "Who's ready, who's stuck, and what to fix in the content." },
+    { id: "kb", label: "Knowledge base", icon: Library, blurb: "The documents lessons and questions are written from, and who may see them." },
+    { id: "learners", label: "Learners", icon: Users, blurb: "Everyone who takes training, with the team and access that decide their paths." },
+    { id: "paths", label: "Learning paths", icon: Route, blurb: "Generate a path from your documents, review every lesson, then publish." },
+    { id: "learn", label: "Learner preview", icon: Eye, blurb: "Exactly what a learner sees. Nothing you submit here is recorded." },
   ];
+  const active = tabs.find((t) => t.id === section)!;
   return (
-    <div className="acad">
-      <header className="acad-header">
-        <h2 className="acad-h2">Academy</h2>
-        <div className="acad-tabs" role="tablist" aria-label="Academy sections">
-          {tabs.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={section === t.id}
-                    className={`acad-tab${section === t.id ? " is-active" : ""}`} onClick={() => setSection(t.id)}>
-              {t.label}
-            </button>
-          ))}
+    <div className="acad acx">
+      <header className="acx-hero">
+        <div className="acx-hero-text">
+          <motion.p className="acx-eyebrow" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>Academy</motion.p>
+          <motion.h2 className="acad-h2 acx-title" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.06, ease: EASE_OUT, duration: 0.5 } }}>
+            Onboarding, built from the documents you already have.
+          </motion.h2>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.p key={section} className="acx-sub"
+              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0, transition: { duration: 0.25 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+              {active.blurb}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+        <div className="acx-tabs" role="tablist" aria-label="Academy sections">
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const on = section === t.id;
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={on}
+                      className={`acx-tab${on ? " is-active" : ""}`} onClick={() => setSection(t.id)}>
+                {on && <motion.span layoutId="acx-tab-pill" className="acx-tab-pill" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+                <Icon size={15} aria-hidden="true" /><span>{t.label}</span>
+              </button>
+            );
+          })}
         </div>
       </header>
-      {section === "progress" && (
-        <ProgressDashboard api={api} onOpenPath={(id) => { setFocusPath(id); setSection("paths"); }} />
-      )}
-      {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
-      {section === "learners" && <Learners api={api} />}
-      {section === "paths" && <Paths api={api} docs={docs} focusId={focusPath} onFocused={clearFocus} />}
-      {section === "learn" && <LearnerView api={api} />}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={section} className="acx-pane"
+          initial={{ opacity: 0, transform: "translateY(12px)" }}
+          animate={{ opacity: 1, transform: "translateY(0px)", transition: { duration: 0.32, ease: EASE_OUT } }}
+          exit={{ opacity: 0, transform: "translateY(-6px)", transition: { duration: 0.14 } }}>
+          {section === "progress" && (
+            <ProgressDashboard api={api} onOpenPath={(id) => { setFocusPath(id); setSection("paths"); }} />
+          )}
+          {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
+          {section === "learners" && <Learners api={api} />}
+          {section === "paths" && <Paths api={api} docs={docs} focusId={focusPath} onFocused={clearFocus} />}
+          {section === "learn" && <LearnerView api={api} />}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

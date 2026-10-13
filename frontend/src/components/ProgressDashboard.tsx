@@ -1,6 +1,8 @@
 // Academy admin dashboard (M4): who is ready, who is stuck, what to fix in the content.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Award, Download, TriangleAlert } from "lucide-react";
+import { motion } from "framer-motion";
+import { Award, CircleCheck, Download, Hourglass, PlayCircle, TriangleAlert, Users } from "lucide-react";
+import { Avatar, Bar, CountUp, EASE_OUT, rise } from "./academyMotion";
 import { Notice, downloadFile, readError } from "./academyShared";
 
 type Api = (path: string, init?: RequestInit) => Promise<Response>;
@@ -30,6 +32,10 @@ type Dash = {
   stale: { path_id: string; title: string; status: string; stale_lessons: number; stale_questions: number }[];
 };
 type Filter = "all" | "overdue" | "signoff" | "not_started";
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: "all", label: "Everyone" }, { id: "overdue", label: "Overdue" },
+  { id: "signoff", label: "Awaiting sign-off" }, { id: "not_started", label: "Not started" },
+];
 
 // Funnel stages are ordinal, so one hue light → dark (validated: adjacent ΔE ≥ 15).
 const STAGES = [
@@ -78,6 +84,14 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
         || Number(b.p.status === "passed") - Number(a.p.status === "passed"));
   }, [data, filter, query]);
 
+  const counts = useMemo(() => {
+    const all = data ? data.learners.flatMap((lr) => lr.paths) : [];
+    return {
+      all: all.length, overdue: all.filter((p) => p.overdue).length,
+      signoff: all.filter((p) => p.status === "passed").length, not_started: all.filter((p) => p.status === "assigned").length,
+    } as Record<Filter, number>;
+  }, [data]);
+
   async function signOff(lr: DashLearner, p: LearnerPath) {
     setBusy(`${lr.uid}:${p.path_id}`); setNotice(null);
     try {
@@ -97,7 +111,7 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
   if (!data) {
     return (
       <div className="acad-section">
-        {error ? <Notice kind="error">{error}</Notice> : <p className="acad-muted">Loading progress…</p>}
+        {error ? <Notice kind="error">{error}</Notice> : <div className="acx-skel" aria-label="Loading progress"><i /><i /><i /></div>}
       </div>
     );
   }
@@ -105,11 +119,11 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
   return (
     <div className="acad-section">
       <div className="dash-tiles">
-        <Tile label="Learners" value={t.learners} note={t.not_signed_in ? `${t.not_signed_in} not signed in yet` : undefined} />
-        <Tile label="In progress" value={t.in_progress} note={`of ${t.assignments} assignment${t.assignments === 1 ? "" : "s"}`} />
-        <Tile label="Completed" value={t.completed} note={t.awaiting_signoff ? `${t.awaiting_signoff} awaiting sign-off` : undefined} />
-        <Tile label="Certified" value={t.certified} />
-        <Tile label="Overdue" value={t.overdue} warn={t.overdue > 0} />
+        <Tile i={0} icon={<Users size={15} />} label="Learners" value={t.learners} note={t.not_signed_in ? `${t.not_signed_in} not signed in yet` : undefined} />
+        <Tile i={1} icon={<PlayCircle size={15} />} label="In progress" value={t.in_progress} note={`of ${t.assignments} assignment${t.assignments === 1 ? "" : "s"}`} />
+        <Tile i={2} icon={<Hourglass size={15} />} label="Completed" value={t.completed} note={t.awaiting_signoff ? `${t.awaiting_signoff} awaiting sign-off` : undefined} />
+        <Tile i={3} icon={<CircleCheck size={15} />} label="Certified" value={t.certified} good />
+        <Tile i={4} icon={<TriangleAlert size={15} />} label="Overdue" value={t.overdue} warn={t.overdue > 0} />
       </div>
 
       {notice && <Notice kind={notice.kind} onClose={() => setNotice(null)}>{notice.text}</Notice>}
@@ -125,7 +139,7 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
         {data.paths.length === 0 ? (
           <p className="acad-empty">No published paths yet. Generate and publish one in Learning paths.</p>
         ) : (
-          <ul className="dash-paths">{data.paths.map((p) => <FunnelRow key={p.id} p={p} />)}</ul>
+          <ul className="dash-paths">{data.paths.map((p, i) => <FunnelRow key={p.id} p={p} i={i} />)}</ul>
         )}
       </section>
 
@@ -136,14 +150,18 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
           <label className="sr-only" htmlFor="dash-q">Search people</label>
           <input id="dash-q" className="authx-input dash-search" placeholder="Search name, team, path"
                  value={query} onChange={(e) => setQuery(e.target.value)} />
-          <label className="sr-only" htmlFor="dash-filter">Show</label>
-          <select id="dash-filter" className="authx-input authx-select dash-filter" value={filter}
-                  onChange={(e) => setFilter(e.target.value as Filter)}>
-            <option value="all">Everyone</option>
-            <option value="overdue">Overdue</option>
-            <option value="signoff">Awaiting sign-off</option>
-            <option value="not_started">Not started</option>
-          </select>
+        </div>
+        <div className="acx-chips" role="radiogroup" aria-label="Show">
+          {FILTERS.map((f) => {
+            const on = filter === f.id;
+            return (
+              <button key={f.id} type="button" role="radio" aria-checked={on}
+                      className={`acx-chip${on ? " is-on" : ""}`} onClick={() => setFilter(f.id)}>
+                {on && <motion.span layoutId="dash-filter-pill" className="acx-chip-pill" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+                <span>{f.label}</span><span className="acx-chip-n">{counts[f.id]}</span>
+              </button>
+            );
+          })}
         </div>
         {data.learners.length === 0 ? (
           <p className="acad-empty">No learners yet. Add them under Learners; progress shows up here once they start.</p>
@@ -154,14 +172,19 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
             <table className="acad-table dash-table">
               <thead><tr><th>Person</th><th>Path</th><th>Progress</th><th>Due</th><th>Status</th></tr></thead>
               <tbody>
-                {rows.map(({ lr, p }) => (
-                  <tr key={`${lr.uid}:${p.path_id}`}>
+                {rows.map(({ lr, p }, i) => (
+                  <motion.tr key={`${lr.uid}:${p.path_id}`} {...rise(i, 0.05)}>
                     <td>
-                      <span className="acad-strong">{lr.name || lr.email}</span>
-                      {lr.pending && <span className="acad-pill">Not signed in yet</span>}
-                      <span className="acad-muted acad-small acad-block">
-                        {[lr.department, lr.role].filter(Boolean).join(" · ") || "No team set"}
-                        {lr.last_active && ` · active ${day(lr.last_active)}`}
+                      <span className="acx-person">
+                        <Avatar name={lr.name || lr.email} />
+                        <span>
+                          <span className="acad-strong">{lr.name || lr.email}</span>
+                          {lr.pending && <span className="acad-pill">Not signed in yet</span>}
+                          <span className="acad-muted acad-small acad-block">
+                            {[lr.department, lr.role].filter(Boolean).join(" · ") || "No team set"}
+                            {lr.last_active && ` · active ${day(lr.last_active)}`}
+                          </span>
+                        </span>
                       </span>
                     </td>
                     <td>
@@ -170,8 +193,12 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
                         <span className="acad-small acad-block dash-weak">Struggling with: {p.weak_modules.join(", ")}</span>
                       )}
                     </td>
-                    <td>
-                      {p.modules_passed}/{p.modules_total} lessons
+                    <td className="acx-prog-cell">
+                      <span className="acx-prog">
+                        <Bar value={p.modules_total ? p.modules_passed / p.modules_total : 0}
+                             tone={p.overdue ? "red" : p.status === "certified" || p.status === "passed" ? "green" : "blue"} delay={0.1 + i * 0.04} />
+                        <span className="num">{p.modules_passed}/{p.modules_total}</span>
+                      </span>
                       {p.score !== null && <span className="acad-muted acad-small acad-block">score {pct(p.score)}</span>}
                     </td>
                     <td>
@@ -195,7 +222,7 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
                       )}
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
               </tbody>
             </table>
@@ -209,14 +236,15 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
           <p className="acad-help">Lowest average score, from questions answered at least 3 times. Rewrite these, or the lesson behind them.</p>
           {data.hardest.length === 0 ? <p className="acad-empty">Not enough answers yet.</p> : (
             <ol className="dash-list">
-              {data.hardest.map((h) => (
-                <li key={h.item_id}>
+              {data.hardest.map((h, i) => (
+                <motion.li key={h.item_id} {...rise(i, 0.1)}>
                   <span className="dash-list-main">
                     <span>{h.stem}</span>
                     <span className="acad-muted acad-small">{h.path_title} · {h.module_title}</span>
+                    <Bar value={h.avg_score} tone={h.avg_score < 0.5 ? "red" : h.avg_score < 0.7 ? "orange" : "green"} delay={0.2 + i * 0.06} />
                   </span>
                   <span className="dash-num">{pct(h.avg_score)}<span className="acad-muted acad-small"> avg · {h.attempts}×</span></span>
-                </li>
+                </motion.li>
               ))}
             </ol>
           )}
@@ -227,14 +255,14 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
           <p className="acad-help">Questions people asked that your documents couldn't answer. Each one is a doc worth writing.</p>
           {data.gaps.length === 0 ? <p className="acad-empty">No unanswered questions yet.</p> : (
             <ol className="dash-list">
-              {data.gaps.map((g) => (
-                <li key={g.question}>
+              {data.gaps.map((g, i) => (
+                <motion.li key={g.question} {...rise(i, 0.1)}>
                   <span className="dash-list-main">
                     <span>{g.question}</span>
                     <span className="acad-muted acad-small">last asked {day(g.last_asked)}</span>
                   </span>
-                  <span className="dash-num">{g.count}×</span>
-                </li>
+                  <span className="dash-num acx-bubble">{g.count}×</span>
+                </motion.li>
               ))}
             </ol>
           )}
@@ -264,17 +292,19 @@ export function ProgressDashboard({ api, onOpenPath }: { api: Api; onOpenPath: (
   );
 }
 
-function Tile({ label, value, note, warn }: { label: string; value: number; note?: string; warn?: boolean }) {
+function Tile({ label, value, note, warn, good, icon, i }: {
+  label: string; value: number; note?: string; warn?: boolean; good?: boolean; icon: React.ReactNode; i: number;
+}) {
   return (
-    <div className={`dash-tile${warn ? " is-warn" : ""}`}>
-      <span className="dash-tile-label">{warn && <TriangleAlert size={13} aria-hidden="true" />}{label}</span>
-      <span className="dash-tile-value">{value}</span>
+    <motion.div className={`dash-tile${warn ? " is-warn" : ""}${good ? " is-good" : ""}`} {...rise(i)}>
+      <span className="dash-tile-label"><span className="acx-tile-ico" aria-hidden="true">{icon}</span>{label}</span>
+      <span className="dash-tile-value"><CountUp value={value} /></span>
       {note && <span className="acad-muted acad-small">{note}</span>}
-    </div>
+    </motion.div>
   );
 }
 
-function FunnelRow({ p }: { p: DashPath }) {
+function FunnelRow({ p, i }: { p: DashPath; i: number }) {
   const counts = {
     not_started: p.eligible - p.started, in_progress: p.started - p.passed,
     awaiting: p.passed - p.certified, certified: p.certified,
@@ -286,7 +316,7 @@ function FunnelRow({ p }: { p: DashPath }) {
     p.median_days_to_ready !== null ? `ready in ${p.median_days_to_ready} days (median)` : "",
   ].filter(Boolean).join(" · ");
   return (
-    <li className="dash-path">
+    <motion.li className="dash-path" {...rise(i, 0.1)}>
       <div className="dash-path-head">
         <span className="acad-strong">{p.title}</span>
         {p.status !== "published" && <span className="acad-badge is-stale">{p.status === "stale" ? "Needs review" : "Has unpublished edits"}</span>}
@@ -294,19 +324,21 @@ function FunnelRow({ p }: { p: DashPath }) {
         {p.overdue > 0 && <span className="dash-overdue"><TriangleAlert size={14} aria-hidden="true" /> {p.overdue} overdue</span>}
       </div>
       {p.eligible > 0 ? (
-        <div className="dash-bar" role="img"
-             aria-label={STAGES.map((s) => `${s.label}: ${counts[s.key]}`).join(", ")}>
+        <motion.div className="dash-bar acx-funnel" role="img"
+             aria-label={STAGES.map((s) => `${s.label}: ${counts[s.key]}`).join(", ")}
+             initial={{ transform: "scaleX(0)" }}
+             animate={{ transform: "scaleX(1)", transition: { duration: 0.9, ease: EASE_OUT, delay: 0.2 + i * 0.08 } }}>
           {STAGES.filter((s) => counts[s.key] > 0).map((s) => (
             <span key={s.key} className={`dash-seg ${s.cls}`} style={{ flexGrow: counts[s.key] }}
                   title={`${s.label}: ${counts[s.key]} of ${p.eligible}`} />
           ))}
-        </div>
+        </motion.div>
       ) : <p className="acad-muted acad-small">Nobody matches this path's audience yet.</p>}
       <p className="acad-small dash-counts">
         <span className="acad-strong">{p.eligible}</span> assigned · <span className="acad-strong">{p.started}</span> started ·{" "}
         <span className="acad-strong">{p.passed}</span> passed · <span className="acad-strong">{p.certified}</span> certified
       </p>
       <p className="acad-muted acad-small">{meta}</p>
-    </li>
+    </motion.li>
   );
 }

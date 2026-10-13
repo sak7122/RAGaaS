@@ -12,6 +12,8 @@ type DocMeta = {
 };
 type Member = { uid: string; email: string; role: string; invited_at: string; joined_at: string | null };
 
+import { demoAcademy } from "./demoAcademy";
+
 const now = () => new Date().toISOString();
 
 const demoDocs: DocMeta[] = [
@@ -147,6 +149,9 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
 
   // Small latency so loading states are visible
   await new Promise((r) => setTimeout(r, 350));
+
+  const academy = demoAcademy(path, method, typeof init?.body === "string" ? JSON.parse(init.body) : null);
+  if (academy) return academy;
 
   if (path.endsWith("/api/tenant/status")) return json(demoStatus());
   if (path.endsWith("/api/documents") && method === "GET") return json(demoDocs);

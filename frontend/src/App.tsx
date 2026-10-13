@@ -734,6 +734,7 @@ function App() {
                 docs={docs}
                 scope={scope}
                 onScopeChange={setScope}
+                workspaceName={status?.tenant_name}
               />
             </ErrorBoundary>
           </>
