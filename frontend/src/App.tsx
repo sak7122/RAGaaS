@@ -1,8 +1,8 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { motion } from "framer-motion";
+import { MotionConfig, motion } from "framer-motion";
 import { LogOut, Sparkles } from "lucide-react";
-import { ToastPortal } from "./components/ui";
+import { ToastPortal, toast } from "./components/ui";
 import {
   devSignInTenant,
   signInWithPassword,
@@ -19,6 +19,7 @@ import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { AcademyPanel } from "./components/AcademyPanel";
+import type { ConvSummary, HistoryProps } from "./components/chatExtras";
 import { AuthForm } from "./components/AuthForm";
 import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -26,7 +27,21 @@ import { Privacy } from "./pages/Privacy";
 import { SharePage } from "./pages/SharePage";
 import { SolvePage } from "./pages/SolvePage";
 import { DEMO, demoFetch } from "./demoBackend";
+import { AUTH_ROUTES, matchMarketing } from "./marketing/routes";
 import "./styles.css";
+
+// Public site, loaded only when a signed-out visitor (or a public page) needs it.
+const Marketing = lazy(() => import("./marketing/Marketing"));
+
+// Set while a Firebase session exists, so a returning user on "/" waits for the
+// session to restore instead of seeing the public home page flash first.
+const SESSION_HINT = "ragaas:session";
+function hasSessionHint(): boolean {
+  try { return localStorage.getItem(SESSION_HINT) === "1"; } catch { return false; }
+}
+function setSessionHint(on: boolean) {
+  try { if (on) localStorage.setItem(SESSION_HINT, "1"); else localStorage.removeItem(SESSION_HINT); } catch { /* */ }
+}
 
 const API          = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 const USE_EMULATOR = import.meta.env.VITE_FIREBASE_USE_EMULATOR === "true";
@@ -63,13 +78,36 @@ type Status = {
   documents: number;
 };
 
+// Error bodies used to be saved as message text (a list from a 422); coerce on load
+// so an old bad entry can't crash the chat.
+function sanitizeMessages(parsed: unknown): ChatMessage[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+    .map((m) => ({ ...m, streaming: false, text: typeof m.text === "string" ? m.text : "Something went wrong with this message." }));
+}
+
 function loadChatHistory(tenantEmail: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`ragaas:chat:${tenantEmail}`);
-    return raw ? JSON.parse(raw) : [];
+    return sanitizeMessages(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
+}
+
+// The conversation the chat is showing, so a reload reopens it from the server.
+const convKey = (email: string) => `ragaas:conv:${email}`;
+function loadConversationId(email: string): string | null {
+  try { return localStorage.getItem(convKey(email)); } catch { return null; }
+}
+
+// FastAPI errors carry `detail` as a string, or as a list of validation issues.
+function errorText(body: { detail?: unknown } | null, status: number): string {
+  const d = body?.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d) && d.length && typeof d[0]?.msg === "string") return `Request rejected: ${d[0].msg}`;
+  return `Something went wrong (HTTP ${status}).`;
 }
 
 function saveChatHistory(tenantEmail: string, messages: ChatMessage[]) {
@@ -87,7 +125,9 @@ if (path === "/privacy") {
 } else if (path === "/solve") {
   createRoot(document.getElementById("root")!).render(<SolvePage />);
 } else {
-  createRoot(document.getElementById("root")!).render(<App />);
+  createRoot(document.getElementById("root")!).render(
+    <MotionConfig reducedMotion="user"><App /></MotionConfig>,
+  );
 }
 
 function App() {
@@ -101,11 +141,17 @@ function App() {
   const [isLoading, setIsLoading]     = useState(false);
   const [docs, setDocs]               = useState<DocumentMeta[]>([]);
   const [deleting, setDeleting]       = useState<string | null>(null);
+  const [refreshing, setRefreshing]   = useState<string | null>(null);
+  // Documents the next question searches (file names); empty = every document.
+  const [scope, setScope]             = useState<string[]>([]);
   const [members, setMembers]         = useState<Member[]>([]);
   const [view, setView]               = useState<"chat" | "insights" | "academy" | "integrations">("chat");
+  const [conversationId, setConversationIdState] = useState<string | null>(null);
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
-  const [authMode, setAuthMode]       = useState<"signin" | "signup">(parseInviteParams() ? "signup" : "signin");
+  const [authMode, setAuthMode]       = useState<"signin" | "signup">(
+    parseInviteParams() || window.location.pathname === AUTH_ROUTES.signup ? "signup" : "signin");
+  const [route, setRoute]             = useState(window.location.pathname);
   const [displayName, setDisplayName] = useState("");
   const tokenRef                      = useRef("");
   const currentUidRef                 = useRef("");
@@ -113,8 +159,111 @@ function App() {
   const [inviteInfo]                  = useState(inviteRef.current);
   const [inviteJoined, setInviteJoined] = useState<string | null>(null);
 
+  // Client-side navigation between the public pages, the auth forms and the app.
+  const navigate = useCallback((to: string) => {
+    const url = new URL(to, window.location.origin);
+    const next = url.pathname + url.search + url.hash;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.pushState({}, "", next);
+    }
+    if (url.pathname === AUTH_ROUTES.signup) setAuthMode("signup");
+    if (url.pathname === AUTH_ROUTES.signin) setAuthMode("signin");
+    setRoute(url.pathname);
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      setRoute(window.location.pathname);
+      if (window.location.pathname === AUTH_ROUTES.signup) setAuthMode("signup");
+      if (window.location.pathname === AUTH_ROUTES.signin) setAuthMode("signin");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
+  }
+
+  function api(path: string, init: RequestInit = {}) {
+    return apiFetch(`${API}${path}`, { ...init, headers: { ...authHeaders(), ...(init.headers ?? {}) } });
+  }
+
+  function setConversationId(id: string | null) {
+    setConversationIdState(id);
+    try {
+      if (id) localStorage.setItem(convKey(tenantEmail), id);
+      else localStorage.removeItem(convKey(tenantEmail));
+    } catch { /* private mode */ }
+  }
+
+  // Reopen the last conversation from the server (history follows the person
+  // across devices); localStorage only covers the moment before it loads.
+  useEffect(() => {
+    if (!online || !tenantEmail) return;
+    const id = loadConversationId(tenantEmail);
+    setConversationIdState(id);
+    if (!id) return;
+    let live = true;
+    api(`/api/conversations/${id}`).then(async (r) => {
+      if (!live) return;
+      if (r.ok) setMessages(sanitizeMessages((await r.json()).messages));
+      else if (r.status === 404) setConversationId(null);
+    }).catch(() => { /* offline: keep local copy */ });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, tenantEmail]);
+
+  function newChat() {
+    setMessages([]);
+    setConversationId(null);
+    saveChatHistory(tenantEmail, []);
+  }
+
+  const history: HistoryProps = {
+    current: conversationId,
+    load: async (): Promise<ConvSummary[]> => {
+      const r = await api("/api/conversations");
+      return r.ok ? r.json() : [];
+    },
+    open: async (id: string) => {
+      const r = await api(`/api/conversations/${id}`);
+      if (!r.ok) { toast("Couldn't open that conversation", "error"); return; }
+      const msgs = sanitizeMessages((await r.json()).messages);
+      setMessages(msgs);
+      saveChatHistory(tenantEmail, msgs);
+      setConversationId(id);
+      setView("chat");
+    },
+    remove: async (id: string) => {
+      await api(`/api/conversations/${id}`, { method: "DELETE" });
+      if (id === conversationId) newChat();
+    },
+    newChat,
+  };
+
+  async function handleFeedback(index: number, helpful: boolean) {
+    const m = messages[index];
+    if (!m?.answer_id) return;
+    setMessages((cur) => cur.map((x, i) => (i === index ? { ...x, helpful } : x)));
+    try {
+      await api("/api/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer_id: m.answer_id, helpful, conversation_id: conversationId }),
+      });
+    } catch { /* rating is best effort */ }
+  }
+
+  async function handleImportUrl(url: string): Promise<string | null> {
+    try {
+      const r = await api("/api/import-url", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+      });
+      if (r.ok) return null;
+      return errorText(await r.json().catch(() => null), r.status);
+    } catch {
+      return "Network error. Try again.";
+    }
   }
 
   const refreshStatus = useCallback(async () => {
@@ -130,6 +279,32 @@ function App() {
       if (membersRes.ok) setMembers(await membersRes.json());
     } catch { /* backend may be starting */ }
   }, []);
+
+  useEffect(() => {
+    setScope((prev) => {
+      const next = prev.filter((f) => docs.some((d) => d.file_name === f));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [docs]);
+
+  // Rebuild one document's summary and starter questions (Gemini in production).
+  async function handleRefreshProfile(fileName: string) {
+    setRefreshing(fileName);
+    try {
+      const res = await apiFetch(`${API}/api/documents/${encodeURIComponent(fileName)}/profile`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail ?? "Could not refresh the summary");
+      setDocs((prev) => prev.map((d) => (d.file_name === fileName ? { ...d, ...body } : d)));
+      toast("Summary and questions refreshed");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not refresh the summary", "error");
+    } finally {
+      setRefreshing(null);
+    }
+  }
 
   async function handleDelete(fileName: string) {
     setDeleting(fileName);
@@ -217,44 +392,68 @@ function App() {
     await sendMessage(question);
   }
 
-  async function sendMessage(raw: string) {
+  async function sendMessage(raw: string, scopeOverride?: string[]) {
     const text = raw.trim();
     if (!text || isLoading) return;
+    const files = scopeOverride ?? scope;
     setQuestion("");
-    const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now() }];
+    const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now(), scope: files }];
     setMessages(next);
     setIsLoading(true);
+    // The answer arrives as newline-delimited JSON: sources first, then the text as
+    // it is written, then a final event with the ids for feedback and history.
+    const st: { msg: ChatMessage | null } = { msg: null };
+    const show = (m: ChatMessage) => { st.msg = m; setMessages([...next, m]); };
     try {
-      const history = messages.slice(-4).map((m) => ({ role: m.role, text: m.text }));
-      const res  = await apiFetch(`${API}/api/chat`, {
+      const history = messages.slice(-4).map((m) => ({ role: m.role, text: String(m.text ?? "").slice(0, 2000) }));
+      const res = await apiFetch(`${API}/api/chat/stream`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({ message: text, history, file_names: files.length ? files : null,
+                               conversation_id: conversationId }),
       });
-      const body = await res.json();
-      const answer = res.ok ? body.answer : (body.detail ?? "Something went wrong.");
-      const updated: ChatMessage[] = [
-        ...next,
-        {
-          role: "assistant",
-          text: answer,
-          citations: body.citations ?? [],
-          retrieval: body.retrieval,
-          timestamp: Date.now(),
-        },
-      ];
-      setMessages(updated);
-      saveChatHistory(tenantEmail, updated);
+      if (!res.ok || !res.body) {
+        show({ role: "assistant", text: errorText(await res.json().catch(() => null), res.status), timestamp: Date.now() });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let written = "";
+      let citations: ChatMessage["citations"] = [];
+      let retrieval: ChatMessage["retrieval"];
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === "meta") {
+            citations = ev.citations ?? [];
+            retrieval = ev.retrieval;
+          } else if (ev.type === "delta") {
+            written += ev.text;
+            show({ role: "assistant", text: written, citations, retrieval, timestamp: Date.now(), streaming: true });
+          } else if (ev.type === "done") {
+            // Nothing cited inside the picked documents: offer to ask the whole workspace.
+            const scopedMiss = files.length > 0 && (citations ?? []).length === 0 ? text : undefined;
+            show({ role: "assistant", text: ev.answer, citations, retrieval: ev.retrieval ?? retrieval,
+                   timestamp: Date.now(), answer_id: ev.answer_id, scopedMiss });
+            if (ev.conversation_id) setConversationId(ev.conversation_id);
+          }
+        }
+      }
+      if (st.msg?.streaming) show({ ...st.msg, streaming: false });   // stream cut short
       refreshStatus();
     } catch {
-      const updated: ChatMessage[] = [
-        ...next,
-        { role: "assistant", text: "Network error — is the backend running?" },
-      ];
-      setMessages(updated);
-      saveChatHistory(tenantEmail, updated);
+      show(st.msg ? { ...st.msg, streaming: false } : { role: "assistant", text: "Network error — is the backend running?" });
     } finally {
       setIsLoading(false);
+      if (st.msg) saveChatHistory(tenantEmail, [...next, { ...st.msg, streaming: false }]);
     }
   }
 
@@ -310,6 +509,7 @@ function App() {
     if (USE_EMULATOR || DEMO) return;
     const unsub = watchAuth(async (user) => {
       setAuthReady(true);
+      setSessionHint(!!user);
       if (user) {
         const token = await user.getIdToken();
         currentUidRef.current = user.uid;
@@ -410,11 +610,33 @@ function App() {
     try { await signOutUser(); } catch { /* ignore */ }
     setView("chat");
     setMessages([]);
-  }, []);
+    setConversationIdState(null);
+    navigate("/");
+  }, [navigate]);
 
   useEffect(() => {
     refreshStatus();
   }, [idToken, refreshStatus]);
+
+  useEffect(() => {
+    if (online && (route === AUTH_ROUTES.signin || route === AUTH_ROUTES.signup)) {
+      window.history.replaceState({}, "", "/");
+      setRoute("/");
+    }
+  }, [online, route]);
+
+  // ── Public site ──────────────────────────────────────────────────────────
+  // "/" is the home page when signed out and the app when signed in; the other
+  // public pages stay reachable either way. Invite links skip straight to sign-up.
+  const marketingPage = inviteInfo ? undefined : matchMarketing(route);
+  const appAtRoot = USE_EMULATOR || DEMO || online || (!authReady && hasSessionHint());
+  if (marketingPage && (route !== "/" || !appAtRoot)) {
+    return (
+      <Suspense fallback={<div className="mk-loading" aria-busy="true" />}>
+        <Marketing page={marketingPage.page} slug={marketingPage.slug} signedIn={online} onNavigate={navigate} />
+      </Suspense>
+    );
+  }
 
   // ── Prod: restoring session (avoid login flash on reload) ───────────────
   if (!USE_EMULATOR && !DEMO && !authReady) {
@@ -435,7 +657,7 @@ function App() {
       <div className="shell">
         <ToastPortal />
         <nav className="global-nav">
-          <span className="nav-brand">RAGaaS</span>
+          <a className="nav-brand" href="/" onClick={(e) => { e.preventDefault(); navigate("/"); }}>RAGaaS</a>
           <span className="nav-spacer" />
           <div className="nav-status">
             <span className="nav-dot offline" />
@@ -452,13 +674,13 @@ function App() {
           {authMode === "signup" ? (
             <SignUpForm
               onSignUp={handleSignUp}
-              onBackToSignIn={() => { setAuthMode("signin"); setAuthState("idle"); }}
+              onBackToSignIn={() => { navigate(AUTH_ROUTES.signin); setAuthState("idle"); }}
               error={STATUS_WORDS.has(authState) ? "" : authState}
             />
           ) : (
             <AuthForm
               onSignIn={handleSignIn}
-              onSwitchToSignUp={() => { setAuthMode("signup"); setAuthState("idle"); }}
+              onSwitchToSignUp={() => { navigate(AUTH_ROUTES.signup); setAuthState("idle"); }}
               error={STATUS_WORDS.has(authState) ? "" : authState}
             />
           )}
@@ -471,6 +693,9 @@ function App() {
   const currentUid = USE_EMULATOR
     ? `dev-${tenantEmail.replace("@ragaas.local", "").replace("@", "-")}`
     : currentUidRef.current;
+  // Admins and uploaders can rebuild document summaries (the backend checks too).
+  const myRole = USE_EMULATOR || DEMO ? "admin" : members.find((m) => m.uid === currentUid)?.role;
+  const canManageDocs = myRole === "admin" || myRole === "uploader";
 
   return (
     <div className="shell">
@@ -565,7 +790,14 @@ function App() {
           onRefresh={refreshStatus}
           extraSlot={
             <>
-              <DocumentList docs={docs} onDelete={handleDelete} deleting={deleting} />
+              <DocumentList
+                docs={docs}
+                onDelete={handleDelete}
+                deleting={deleting}
+                canManage={canManageDocs}
+                onRefreshProfile={handleRefreshProfile}
+                refreshing={refreshing}
+              />
               <MembersPanel
                 members={members}
                 currentUid={currentUid}
@@ -584,6 +816,7 @@ function App() {
             <InsightsPanel
               fetchInsights={fetchInsights}
               onQuickAsk={(q) => { setView("chat"); setQuestion(q); }}
+              api={api}
             />
           </ErrorBoundary>
         ) : view === "academy" ? (
@@ -601,6 +834,7 @@ function App() {
               authToken={idToken}
               disabled={!online}
               onComplete={refreshStatus}
+              onImportUrl={canManageDocs ? handleImportUrl : undefined}
             />
             <ErrorBoundary>
               <ChatWindow
@@ -612,6 +846,12 @@ function App() {
                 onAsk={sendMessage}
                 onShare={handleShare}
                 disabled={!online}
+                docs={docs}
+                scope={scope}
+                onScopeChange={setScope}
+                workspaceName={status?.tenant_name}
+                onFeedback={handleFeedback}
+                history={history}
               />
             </ErrorBoundary>
           </>

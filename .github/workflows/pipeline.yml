@@ -161,6 +161,27 @@ jobs:
       - name: Deploy backend → Cloud Run
         id: deploy-backend
         run: |
+          # Channel secrets are optional: attach each one only once it exists in
+          # Secret Manager. (--set-env-vars below replaces all plain env vars, so
+          # values set by hand on Cloud Run would be wiped on every deploy.)
+          SECRETS="SMTP_PASSWORD=ragaas-smtp-password:latest,SUPABASE_URL=academy-supabase-url:latest,SUPABASE_SERVICE_KEY=academy-supabase-service-key:latest"
+          for pair in \
+            SLACK_SIGNING_SECRET=ragaas-slack-signing-secret \
+            WHATSAPP_ACCESS_TOKEN=ragaas-whatsapp-access-token \
+            WHATSAPP_APP_SECRET=ragaas-whatsapp-app-secret \
+            WHATSAPP_VERIFY_TOKEN=ragaas-whatsapp-verify-token \
+            RAZORPAY_KEY_ID=ragaas-razorpay-key-id \
+            RAZORPAY_KEY_SECRET=ragaas-razorpay-key-secret \
+            RAZORPAY_WEBHOOK_SECRET=ragaas-razorpay-webhook-secret \
+            CRON_TOKEN=ragaas-cron-token; do
+            name="${pair#*=}"
+            if gcloud secrets describe "$name" --project "${{ secrets.GCP_PROJECT_ID }}" >/dev/null 2>&1; then
+              SECRETS="$SECRETS,$pair:latest"
+              echo "attaching $name"
+            else
+              echo "::notice::secret $name not found; ${pair%%=*} stays unset"
+            fi
+          done
           URL=$(gcloud run deploy ragaas-backend \
             --image "${{ steps.build.outputs.image }}" \
             --region us-central1 \
@@ -168,7 +189,7 @@ jobs:
             --allow-unauthenticated \
             --min-instances 0 \
             --max-instances 1 \
-            --memory 512Mi \
+            --memory 1Gi \
             --cpu 1 \
             --timeout 300 \
             --port 8000 \
@@ -184,8 +205,11 @@ jobs:
           SMTP_PORT=${{ secrets.SMTP_PORT }},\
           SMTP_USER=${{ secrets.SMTP_USER }},\
           SMTP_FROM=${{ secrets.SMTP_FROM }},\
-          ACADEMY_ENGINES=${{ vars.ACADEMY_ENGINES }}" \
-            --update-secrets "SMTP_PASSWORD=ragaas-smtp-password:latest,SUPABASE_URL=academy-supabase-url:latest,SUPABASE_SERVICE_KEY=academy-supabase-service-key:latest" \
+          ACADEMY_ENGINES=${{ vars.ACADEMY_ENGINES }},\
+          BILLING_ENFORCED=${{ vars.BILLING_ENFORCED }},\
+          RAZORPAY_PLAN_STARTER=${{ vars.RAZORPAY_PLAN_STARTER }},\
+          RAZORPAY_PLAN_TEAM=${{ vars.RAZORPAY_PLAN_TEAM }}" \
+            --update-secrets "$SECRETS" \
             --format "value(status.url)")
           echo "url=$URL" >> "$GITHUB_OUTPUT"
           echo "Backend deployed to: $URL"

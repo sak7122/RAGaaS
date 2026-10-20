@@ -3,8 +3,12 @@ Index backends for chunk metadata (tenant docs + their text chunks).
 Dev  → LocalIndexStore    (local_data/index.json)
 Prod → FirestoreIndexStore (tenants/{tenantId}/documents/{fileName})
 
-Firestore document shape:
-  { tenant_id, file_name, chunks: [{page, chunk_index, text}], uploaded_at, gcs_uri }
+Firestore shape:
+  tenants/{tid}/documents/{file}  { tenant_id, file_name, chunk_count, uploaded_at, storage_uri }
+  tenants/{tid}/chunks/{file::page::idx}  { file_name, page, chunk_index, text, embedding? }
+Chunk text lives only in the chunks collection, so a document's size is not
+bounded by Firestore's 1 MB per-document limit. Documents written before that
+change still carry an inline `chunks` list; readers handle both shapes.
 """
 from __future__ import annotations
 
@@ -23,9 +27,29 @@ class IndexBackend(Protocol):
     def upsert_doc(self, tenant_id: str, doc: dict) -> None: ...
     def delete_doc(self, tenant_id: str, file_name: str) -> bool: ...
     def delete_tenant(self, tenant_id: str) -> int: ...
+    # Every chunk's text for keyword fallback: [{file_name, page, chunk_index, text}, ...]
+    def list_chunks(self, tenant_id: str) -> list[dict]: ...
+    # The first `limit` chunks of one document (by page, then chunk index), for profiles.
+    def doc_chunks(self, tenant_id: str, file_name: str, limit: int) -> list[dict]: ...
+    # Merge fields into a document's metadata (never its chunks). False if no such document.
+    def update_doc_meta(self, tenant_id: str, file_name: str, fields: dict) -> bool: ...
     # Returns candidate chunks ranked by vector similarity:
     #   [{file_name, page, chunk_index, text, vec_score}, ...]
     def vector_search(self, tenant_id: str, query_vector: list[float], k: int) -> list[dict]: ...
+
+
+def chunk_count(doc: dict) -> int:
+    if "chunk_count" in doc:
+        return int(doc["chunk_count"])
+    return len(doc.get("chunks") or doc.get("pages", []))
+
+
+def _inline_chunks(doc: dict) -> list[dict]:
+    chunks = doc.get("chunks") or [
+        {"page": i + 1, "chunk_index": 0, "text": p} for i, p in enumerate(doc.get("pages", []))
+    ]
+    return [{"file_name": doc["file_name"], "page": ch.get("page", 1),
+             "chunk_index": ch.get("chunk_index", 0), "text": ch.get("text", "")} for ch in chunks]
 
 
 # ── Dev: JSON file ────────────────────────────────────────────────────────────
@@ -74,6 +98,25 @@ class LocalIndexStore:
         removed = before - len(data["documents"])
         self._save(data)
         return removed
+
+    def list_chunks(self, tenant_id: str) -> list[dict]:
+        return [c for d in self.list_docs(tenant_id) for c in _inline_chunks(d)]
+
+    def doc_chunks(self, tenant_id: str, file_name: str, limit: int) -> list[dict]:
+        for d in self.list_docs(tenant_id):
+            if d["file_name"] == file_name:
+                chunks = sorted(_inline_chunks(d), key=lambda c: (c["page"], c["chunk_index"]))
+                return chunks[:limit]
+        return []
+
+    def update_doc_meta(self, tenant_id: str, file_name: str, fields: dict) -> bool:
+        data = self._load()
+        for d in data["documents"]:
+            if d["tenant_id"] == tenant_id and d["file_name"] == file_name:
+                d.update({k: v for k, v in fields.items() if k not in ("chunks", "tenant_id", "file_name")})
+                self._save(data)
+                return True
+        return False
 
     def vector_search(self, tenant_id: str, query_vector: list[float], k: int) -> list[dict]:
         from backend.rag import cosine
@@ -124,35 +167,70 @@ class FirestoreIndexStore:
         from google.cloud.firestore_v1.vector import Vector
 
         file_name = doc["file_name"]
-        # Store the doc WITHOUT per-chunk embeddings (keeps it under the 1 MB
-        # Firestore doc limit); embeddings live in the chunks subcollection.
-        light = {**doc, "chunks": [
-            {k: ch[k] for k in ("page", "chunk_index", "text") if k in ch}
-            for ch in doc.get("chunks", [])
-        ]}
-        self._col(tenant_id).document(file_name).set(light)
+        chunks = doc.get("chunks", [])
+        # Metadata only: chunk text would hit Firestore's 1 MB document limit
+        # for anything longer than a short book.
+        meta = {k: v for k, v in doc.items() if k != "chunks"}
+        meta["chunk_count"] = len(chunks)
 
-        # Replace this file's chunk vectors
+        # Replace this file's chunks. Every chunk is stored (keyword fallback
+        # needs the text); only embedded ones are reachable by find_nearest.
         self._delete_chunks_for_file(tenant_id, file_name)
-        batch = self._db.batch()
-        for ch in doc.get("chunks", []):
-            emb = ch.get("embedding")
-            if not emb:
-                continue
+        # BulkWriter sends writes in parallel (a long book is thousands of
+        # chunks; serial 500-op batches would outlast the request timeout).
+        writer = self._db.bulk_writer()
+        for ch in chunks:
             cid = self._chunk_id(file_name, ch.get("page", 1), ch.get("chunk_index", 0))
-            batch.set(self._chunks(tenant_id).document(cid), {
+            row = {
                 "file_name": file_name,
                 "page": ch.get("page", 1),
                 "chunk_index": ch.get("chunk_index", 0),
                 "text": ch.get("text", ""),
-                "embedding": Vector(emb),
-            })
-        batch.commit()
+            }
+            if ch.get("embedding"):
+                row["embedding"] = Vector(ch["embedding"])
+            writer.set(self._chunks(tenant_id).document(cid), row)
+        writer.close()          # flushes and waits for every write
+        # Written last: the document only appears in listings once its chunks exist.
+        self._col(tenant_id).document(file_name).set(meta)
+
+    def _delete_refs(self, refs) -> None:
+        writer = self._db.bulk_writer()
+        for ref in refs:
+            writer.delete(ref)
+        writer.close()
 
     def _delete_chunks_for_file(self, tenant_id: str, file_name: str) -> None:
-        q = self._chunks(tenant_id).where("file_name", "==", file_name)
-        for d in q.stream():
-            d.reference.delete()
+        q = self._chunks(tenant_id).where("file_name", "==", file_name).select([])
+        self._delete_refs(d.reference for d in q.stream())
+
+    def list_chunks(self, tenant_id: str) -> list[dict]:
+        rows = self._chunks(tenant_id).select(["file_name", "page", "chunk_index", "text"]).stream()
+        out = [r.to_dict() for r in rows]
+        stored = {c["file_name"] for c in out}
+        for d in self.list_docs(tenant_id):        # legacy docs with inline chunks only
+            if d.get("file_name") not in stored and d.get("chunks"):
+                out.extend(_inline_chunks(d))
+        return out
+
+    def doc_chunks(self, tenant_id: str, file_name: str, limit: int) -> list[dict]:
+        # Equality queries come back in document-id order ("file::page::idx"), so the
+        # early pages arrive first; over-fetch a little and sort numerically.
+        q = (self._chunks(tenant_id).where("file_name", "==", file_name)
+             .select(["file_name", "page", "chunk_index", "text"]).limit(limit * 3))
+        rows = [r.to_dict() for r in q.stream()]
+        if not rows:  # legacy document with inline chunks only
+            snap = self._col(tenant_id).document(file_name).get()
+            rows = _inline_chunks(snap.to_dict()) if snap.exists and (snap.to_dict() or {}).get("chunks") else []
+        rows.sort(key=lambda c: (int(c.get("page", 1)), int(c.get("chunk_index", 0))))
+        return rows[:limit]
+
+    def update_doc_meta(self, tenant_id: str, file_name: str, fields: dict) -> bool:
+        ref = self._col(tenant_id).document(file_name)
+        if not ref.get().exists:
+            return False
+        ref.set({k: v for k, v in fields.items() if k not in ("chunks", "tenant_id", "file_name")}, merge=True)
+        return True
 
     def delete_doc(self, tenant_id: str, file_name: str) -> bool:
         ref = self._col(tenant_id).document(file_name)
@@ -165,11 +243,9 @@ class FirestoreIndexStore:
 
     def delete_tenant(self, tenant_id: str) -> int:
         col = self._col(tenant_id)
-        docs = list(col.stream())
-        for d in docs:
-            d.reference.delete()
-        for c in self._chunks(tenant_id).stream():
-            c.reference.delete()
+        docs = list(col.select([]).stream())
+        self._delete_refs(d.reference for d in docs)
+        self._delete_refs(c.reference for c in self._chunks(tenant_id).select([]).stream())
         return len(docs)
 
     def vector_search(self, tenant_id: str, query_vector: list[float], k: int) -> list[dict]:

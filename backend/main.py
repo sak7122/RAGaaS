@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import io
@@ -8,17 +9,21 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 from docx import Document
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import config
@@ -32,14 +37,23 @@ from backend.firebase_services import (
     verify_firebase_token,
 )
 from backend.storage import create_storage_backend
-from backend.index_store import create_index_store
-from backend.rag import create_embedder, create_generator
-from backend.insights import create_insights_store
+from backend.index_store import chunk_count, create_index_store
+from backend.rag import NOT_FOUND_ANSWER, create_embedder, create_generator
+from backend.doc_profile import SAMPLE_CHUNKS, build_profile, extractive_profile, profile_is_current
+from backend.insights import GAP_THRESHOLD, create_insights_store
 from backend.tenant_profile import create_tenant_profile_store, prettify
-from backend.mailer import send_invite_email, smtp_configured
+from backend.mailer import send_email, send_invite_email, smtp_configured
 from backend.share_store import create_share_store
 from backend.widget_store import create_widget_key_store
 from backend.slack_store import create_slack_store
+from backend.conversations import create_conversation_store
+from backend.digest import build_digest, create_digest_store
+from backend import billing
+from backend.ingest import SUPPORTED_LABEL, chunk_text, fetch_page
+from backend.ingest import extract_chunks as ingest_extract
+from backend import whatsapp as wa
+from backend.whatsapp import to_whatsapp
+from backend.whatsapp_store import create_whatsapp_store
 from backend.planner import create_planner
 from backend.academy.router import create_academy_router
 from backend.academy.search import create_knowledge_search
@@ -64,7 +78,7 @@ log = logging.getLogger("ragaas")
 DATA_DIR       = Path("local_data")
 UPLOAD_DIR     = DATA_DIR / "uploads"
 INDEX_FILE     = DATA_DIR / "index.json"
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024   # Cloud Run caps HTTP/1 request bodies at 32 MiB
 PDF_MAGIC      = b"%PDF"
 ZIP_MAGIC      = b"PK\x03\x04"  # docx is a zip container — disambiguate by extension
 VALID_ROLES    = {"admin", "uploader", "viewer"}
@@ -72,7 +86,7 @@ VALID_ROLES    = {"admin", "uploader", "viewer"}
 # set RAG_ENGINE_LABEL="Vertex AI Search" if you migrate to managed retrieval.
 RAG_ENGINE_LABEL = os.getenv("RAG_ENGINE_LABEL", "Hybrid Vector Search")
 HYBRID_VECTOR_WEIGHT = 0.7   # blend: 0.7*cosine + 0.3*keyword overlap
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "").strip()
 
 # Dev-only mock tokens — empty dict in production
 TOKEN_TENANT_MAP: dict[str, str] = (
@@ -145,6 +159,10 @@ tenant_profile_store = create_tenant_profile_store(config.env)
 share_store          = create_share_store(config.env)
 widget_key_store     = create_widget_key_store(config.env)
 slack_store          = create_slack_store(config.env)
+whatsapp_store       = create_whatsapp_store(config.env)
+conversation_store   = create_conversation_store(config.env)
+digest_store         = create_digest_store(config.env)
+billing_store        = billing.create_billing_store(config.env)
 planner              = create_planner()
 # generate_document needs the LLM + retrieval; lambdas resolve module globals at
 # call time (retrieve_chunks is defined further down — fine, only invoked later).
@@ -163,14 +181,28 @@ log.info("startup env=%s emulator=%s embedder=%s generator=%s planner=%s tools=%
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
+HISTORY_TURN_CHARS = 2000
+
+
 class TurnHistory(BaseModel):
     role: str   # "user" or "assistant"
-    text: str = Field(max_length=2000)
+    text: str
+
+    # Answers often run past 2,000 characters; rejecting them made every later
+    # question fail with a 422. Only the start of a turn matters for context.
+    @field_validator("text")
+    @classmethod
+    def _clip(cls, v: str) -> str:
+        return v[:HISTORY_TURN_CHARS]
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     history: list[TurnHistory] = Field(default_factory=list, max_length=4)
+    # Documents picked in the Ask page; None or [] searches every document.
+    file_names: list[str] | None = Field(default=None, max_length=50)
+    # Saved conversation to append this turn to; None starts a new one.
+    conversation_id: str | None = Field(default=None, max_length=64)
 
 
 class Citation(BaseModel):
@@ -189,6 +221,7 @@ class RetrievalTrace(BaseModel):
     top_k: int                  # how many returned
     max_score: float            # best relevance score
     latency_ms: int             # retrieval time
+    scoped_to: list[str] = Field(default_factory=list)  # picked documents; empty = all
 
 
 class ChatResponse(BaseModel):
@@ -198,6 +231,27 @@ class ChatResponse(BaseModel):
     tenant_id: str
     queries_used: int
     query_limit: int
+    answer_id: str | None = None          # for 👍/👎 feedback; None when not recorded
+    conversation_id: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=64)
+    helpful: bool
+    conversation_id: str | None = Field(default=None, max_length=64)
+
+
+class GapAnswerRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+    answer: str = Field(min_length=3, max_length=4000)
+
+
+class ImportUrlRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
+class DigestSubscribeRequest(BaseModel):
+    on: bool
 
 
 class TenantStatus(BaseModel):
@@ -227,28 +281,12 @@ class DocumentMeta(BaseModel):
     file_name: str
     chunks: int
     uploaded_at: str
-
-
-class QuestionStat(BaseModel):
-    question: str
-    count: int
-    avg_score: float
-
-
-class KnowledgeGap(BaseModel):
-    question: str
-    count: int
-    best_score: float
-    avg_score: float
-
-
-class InsightsResponse(BaseModel):
-    total_queries: int
-    avg_confidence: float
-    answered_rate: float
-    top_questions: list[QuestionStat]
-    gaps: list[KnowledgeGap]
-    window: int
+    # Profile for the document picker (backend/doc_profile.py)
+    title: str = ""
+    pages: int = 0
+    summary: str = ""
+    questions: list[str] = Field(default_factory=list)
+    profile_source: str = ""    # "generated" (model) | "extractive"
 
 
 class MemberOut(BaseModel):
@@ -355,86 +393,10 @@ def assert_safe_path(resolved: Path, base: Path) -> None:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
 
-def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> list[str]:
-    words = text.split()
-    chunks: list[str] = []
-    start = 0
-    while start < len(words):
-        end = min(start + chunk_size, len(words))
-        chunks.append(" ".join(words[start:end]))
-        if end == len(words):
-            break
-        start += chunk_size - overlap
-    return chunks or [""]
-
-
-def _extract_pdf_chunks(content: bytes) -> list[dict]:
-    try:
-        reader = PdfReader(io.BytesIO(content))
-        result = []
-        for page_num, page in enumerate(reader.pages, start=1):
-            page_text = (page.extract_text() or "").strip()
-            for idx, chunk in enumerate(chunk_text(page_text)):
-                if chunk.strip():               # skip empty chunks (blank/image pages)
-                    result.append({"page": page_num, "chunk_index": idx, "text": chunk})
-        # No selectable text -> almost certainly a scanned/image PDF (needs OCR).
-        if not result:
-            raise HTTPException(
-                status_code=422,
-                detail=("No selectable text found in this PDF. It looks like a scanned or "
-                        "image-only document — OCR isn't supported yet. Upload a text-based PDF."),
-            )
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.warning("PDF parse failed: %s", exc)
-        raise HTTPException(
-            status_code=400,
-            detail="Could not parse PDF — file may be corrupted or encrypted",
-        )
-
-
-def _extract_docx_chunks(content: bytes) -> list[dict]:
-    try:
-        doc = Document(io.BytesIO(content))
-        # Paragraphs + table cells — docx has no reliable page boundaries, so page=1.
-        parts = [p.text for p in doc.paragraphs]
-        for table in doc.tables:
-            for row in table.rows:
-                parts.extend(cell.text for cell in row.cells)
-        full_text = "\n".join(t for t in parts if t and t.strip())
-        result = [
-            {"page": 1, "chunk_index": idx, "text": chunk}
-            for idx, chunk in enumerate(chunk_text(full_text))
-            if chunk.strip()
-        ]
-        if not result:
-            raise HTTPException(
-                status_code=422,
-                detail="No text found in this Word document. Upload a document that contains text.",
-            )
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.warning("DOCX parse failed: %s", exc)
-        raise HTTPException(
-            status_code=400,
-            detail="Could not parse Word document — file may be corrupted. Legacy .doc isn't supported; save as .docx.",
-        )
-
-
 def extract_chunks(content: bytes, file_name: str) -> list[dict]:
-    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-    if content[:4] == PDF_MAGIC:
-        return _extract_pdf_chunks(content)
-    if ext == "docx" and content[:4] == ZIP_MAGIC:
-        return _extract_docx_chunks(content)
-    raise HTTPException(
-        status_code=400,
-        detail="Unsupported file type. Upload a PDF or a Word (.docx) document.",
-    )
+    """Searchable chunks for any supported file; scans, photos and audio are read by
+    the generator (Gemini in production)."""
+    return ingest_extract(content, file_name, getattr(generator, "transcribe", None))
 
 
 def tokenize(text: str) -> set[str]:
@@ -442,11 +404,83 @@ def tokenize(text: str) -> set[str]:
 
 
 def enforce_quota(tenant_id: str) -> int:
-    return usage_store.increment_or_reject(tenant_id)
+    plan = billing.current_plan(billing_store, tenant_id)
+    if plan.questions is not None and billing_store.questions_this_month(tenant_id) >= plan.questions:
+        raise HTTPException(status_code=429, detail=(
+            f"Your {plan.name} plan's {plan.questions:,} questions for this month are used up. "
+            "Upgrade under Billing to keep asking."))
+    used = usage_store.increment_or_reject(tenant_id)
+    billing_store.count_question(tenant_id)
+    return used
+
+
+def require_documents_room(tenant_id: str, file_name: str) -> None:
+    """Refuse a new document over the plan's limit (replacing an existing one is fine)."""
+    plan = billing.current_plan(billing_store, tenant_id)
+    if plan.documents is None:
+        return
+    names = {d["file_name"] for d in index_store.list_docs(tenant_id)} - {"team-answers.md"}
+    if file_name not in names and len(names) >= plan.documents:
+        raise HTTPException(status_code=403, detail=(
+            f"Your {plan.name} plan includes {plan.documents} documents. Upgrade under Billing to add more."))
+
+
+def require_channels(tenant_id: str, what: str) -> None:
+    plan = billing.current_plan(billing_store, tenant_id)
+    if not plan.channels:
+        raise HTTPException(status_code=403, detail=f"{what} is included on the Team plan. Upgrade under Billing.")
+
+
+def resolve_scope(tenant_id: str, file_names: list[str] | None) -> set[str] | None:
+    """Documents a request is limited to, or None for all. Names not in this tenant's
+    index are dropped (a picker can be stale after a delete); none left is a 400."""
+    if not file_names:
+        return None
+    known = {d["file_name"] for d in index_store.list_docs(tenant_id)}
+    scope = {safe_filename(f) for f in file_names} & known
+    if not scope:
+        raise HTTPException(status_code=400, detail="None of the selected documents are in this workspace.")
+    return scope
+
+
+def gather_candidates(tenant_id: str, search_query: str, scope: set[str] | None) -> list[dict]:
+    """Vector candidates, else every chunk for keyword scoring; both limited to scope."""
+    candidates: list[dict] = []
+    try:
+        q_vec = embedder.embed_query(search_query)
+        # A scoped search filters after the nearest-neighbour query, so ask for more.
+        candidates = index_store.vector_search(tenant_id, q_vec, k=30 if scope is None else 120)
+    except Exception as exc:
+        log.warning("vector search failed (%s); keyword fallback", exc)
+    if scope is not None:
+        candidates = [c for c in candidates if c["file_name"] in scope]
+    if not candidates:
+        pool = index_store.list_chunks(tenant_id)
+        if scope is not None:
+            pool = [c for c in pool if c["file_name"] in scope]
+        candidates = [{**c, "vec_score": 0.0} for c in pool]
+    return candidates
+
+
+def distinct_top(ranked: list[tuple[float, dict]], k: int) -> list[tuple[float, dict]]:
+    """Best k passages with identical text kept once. The same file uploaded twice
+    otherwise fills the answer's k slots in pairs and halves the evidence it sees."""
+    seen: set[str] = set()
+    out: list[tuple[float, dict]] = []
+    for s, c in ranked:
+        key = re.sub(r"\s+", " ", c.get("text", "")).strip().lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((s, c))
+        if len(out) == k:
+            break
+    return out
 
 
 def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
-                    history: list[dict] | None = None) -> list[dict]:
+                    history: list[dict] | None = None,
+                    scope: set[str] | None = None) -> list[dict]:
     """Tenant-scoped hybrid retrieval (vector + keyword), shared by the planner.
     Returns ranked chunks: [{file_name, page, chunk_index, text, score}, ...].
     Same scoring as /api/chat; isolation is enforced at index_store level."""
@@ -461,25 +495,7 @@ def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
     query_terms = tokenize(search_query)
     denom = max(len(query_terms), 1)
 
-    candidates: list[dict] = []
-    try:
-        q_vec = embedder.embed_query(search_query)
-        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
-    except Exception as exc:
-        log.warning("vector search failed (%s); keyword fallback", exc)
-
-    if not candidates:
-        for doc in index_store.list_docs(tenant_id):
-            chunks = doc.get("chunks") or [
-                {"page": i + 1, "chunk_index": 0, "text": p}
-                for i, p in enumerate(doc.get("pages", []))
-            ]
-            for ch in chunks:
-                candidates.append({
-                    "file_name": doc["file_name"], "page": ch.get("page", 1),
-                    "chunk_index": ch.get("chunk_index", 0),
-                    "text": ch.get("text", ""), "vec_score": 0.0,
-                })
+    candidates = gather_candidates(tenant_id, search_query, scope)
 
     ranked: list[tuple[float, dict]] = []
     for c in candidates:
@@ -495,8 +511,102 @@ def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
             "file_name": c["file_name"], "page": c.get("page", 1),
             "chunk_index": c.get("chunk_index", 0), "text": c["text"], "score": s,
         }
-        for s, c in ranked[:k]
+        for s, c in distinct_top(ranked, k)
     ]
+
+
+@dataclass
+class AnswerResult:
+    answer: str
+    top: list[tuple[float, dict]]       # (score, chunk) passages the answer was written from
+    query_terms: set[str]
+    chunks_searched: int
+    candidates_ranked: int
+    latency_ms: int
+    started: float = 0.0
+
+    @property
+    def max_score(self) -> float:
+        return self.top[0][0] if self.top else 0.0
+
+    @property
+    def chunks(self) -> list[dict]:
+        return [c for _, c in self.top]
+
+    @property
+    def cited_files(self) -> list[str]:
+        return sorted({c["file_name"] for _, c in self.top})
+
+    def finish(self, answer: str) -> "AnswerResult":
+        self.answer = answer
+        self.latency_ms = max(int((time.perf_counter() - self.started) * 1000), 1)
+        return self
+
+
+def answer_question(tenant_id: str, question: str, history: list[dict] | None = None,
+                    scope: set[str] | None = None) -> AnswerResult:
+    """One question → grounded answer. Shared by chat, Slack and WhatsApp so every
+    channel gets the same retrieval (rewrite, hybrid score, dedupe, scope) and prompt.
+    Callers own quota, auth and recording insights."""
+    res = retrieve_for_answer(tenant_id, question, history, scope)
+    return res.finish(generator.generate(question, res.chunks, history or []))
+
+
+def retrieve_for_answer(tenant_id: str, question: str, history: list[dict] | None = None,
+                        scope: set[str] | None = None) -> AnswerResult:
+    """Everything before generation: rewrite, hybrid retrieval, dedupe."""
+    history = history or []
+    started = time.perf_counter()
+    docs = index_store.list_docs(tenant_id)
+    chunks_searched = sum(chunk_count(d) for d in docs if scope is None or d["file_name"] in scope)
+
+    # 1) Query rewriting — expand/resolve the question for better retrieval
+    search_query = question
+    if hasattr(generator, "rewrite_query"):
+        try:
+            search_query = generator.rewrite_query(question, history)
+            if search_query != question:
+                log.info("query_rewrite tenant=%s original=%r rewritten=%r", tenant_id, question, search_query)
+        except Exception as exc:
+            log.warning("query rewrite failed (%s); using original", exc)
+
+    query_terms = tokenize(search_query)
+    denom = max(len(query_terms), 1)
+
+    # 2-3) Vector candidates, else every chunk (keyword only); limited to picked documents
+    candidates = gather_candidates(tenant_id, search_query, scope)
+
+    # 4) Hybrid score: blend cosine with keyword overlap; drop noise below the floor
+    ranked: list[tuple[float, dict]] = []
+    for c in candidates:
+        kw = len(query_terms & tokenize(c["text"])) / denom
+        vec = float(c.get("vec_score", 0.0))
+        score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
+        if score >= 0.05:
+            ranked.append((round(score, 4), c))
+    ranked.sort(key=lambda t: t[0], reverse=True)
+    top = distinct_top(ranked, 6)
+    return AnswerResult(
+        answer="", top=top, query_terms=query_terms, chunks_searched=chunks_searched,
+        candidates_ranked=len(ranked), latency_ms=max(int((time.perf_counter() - started) * 1000), 1),
+        started=started,
+    )
+
+
+def doc_titles(tenant_id: str) -> dict[str, str]:
+    """file_name → readable title, for citing sources outside the web app."""
+    return {d["file_name"]: d.get("title") or d["file_name"] for d in index_store.list_docs(tenant_id)}
+
+
+def source_lines(tenant_id: str, top: list[tuple[float, dict]]) -> list[str]:
+    """Unique "Title, p. N" references in the order the answer used them."""
+    titles = doc_titles(tenant_id)
+    out: list[str] = []
+    for _, c in top:
+        ref = f"{titles.get(c['file_name'], c['file_name'])}, p. {c.get('page', 1)}"
+        if ref not in out:
+            out.append(ref)
+    return out
 
 
 # ── Routes: academy (docs/PRD-onboarding.md) ─────────────────────────────────
@@ -507,6 +617,7 @@ app.include_router(create_academy_router(
     require_role=require_role,
     enforce_quota=enforce_quota,
     max_upload_bytes=MAX_UPLOAD_BYTES,
+    tenant_name=lambda t: tenant_profile_store.get_name(t) or prettify(t),
 ))
 
 
@@ -547,17 +658,55 @@ def set_tenant_profile(
 
 
 # ── Routes: documents ─────────────────────────────────────────────────────────
+PROFILE_FIELDS = ("title", "pages", "summary", "questions", "profile_source")
+
+
+def document_meta(d: dict) -> DocumentMeta:
+    return DocumentMeta(
+        file_name=d["file_name"],
+        chunks=chunk_count(d),
+        uploaded_at=d["uploaded_at"],
+        **{k: d[k] for k in PROFILE_FIELDS if d.get(k) is not None},
+    )
+
+
+def ensure_profile(tenant_id: str, d: dict) -> dict:
+    """Backfill a profile for a document indexed before profiles existed (or with an older
+    extractive one). Extractive only, so listing never waits on a model;
+    POST /api/documents/{file}/profile upgrades it."""
+    if profile_is_current(d):
+        return d
+    profile = extractive_profile(d["file_name"], index_store.doc_chunks(tenant_id, d["file_name"], SAMPLE_CHUNKS))
+    profile["pages"] = max((int(c.get("page", 1)) for c in d.get("chunks", [])), default=0) or d.get("pages", 0)
+    try:
+        index_store.update_doc_meta(tenant_id, d["file_name"], profile)
+    except Exception as exc:  # still return it; the next listing retries the write
+        log.warning("profile backfill write failed tenant=%s file=%s: %s", tenant_id, d["file_name"], exc)
+    return {**d, **profile}
+
+
 @app.get("/api/documents", response_model=list[DocumentMeta])
 def list_documents(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[DocumentMeta]:
-    docs = index_store.list_docs(principal.tenant_id)
-    return [
-        DocumentMeta(
-            file_name=d["file_name"],
-            chunks=len(d.get("chunks", d.get("pages", []))),
-            uploaded_at=d["uploaded_at"],
-        )
-        for d in docs
-    ]
+    tenant_id = principal.tenant_id
+    return [document_meta(ensure_profile(tenant_id, d)) for d in index_store.list_docs(tenant_id)]
+
+
+@app.post("/api/documents/{file_name}/profile", response_model=DocumentMeta)
+def regenerate_profile(
+    file_name: str,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> DocumentMeta:
+    """Rebuild one document's summary and starter questions (with the model in prod)."""
+    require_role(principal, "admin", "uploader")
+    tenant_id = principal.tenant_id
+    safe_name = safe_filename(file_name)
+    doc = next((d for d in index_store.list_docs(tenant_id) if d["file_name"] == safe_name), None)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    profile = build_profile(safe_name, index_store.doc_chunks(tenant_id, safe_name, SAMPLE_CHUNKS * 4), generator)
+    index_store.update_doc_meta(tenant_id, safe_name, profile)
+    log.info("profile regenerated tenant=%s file=%s source=%s", tenant_id, safe_name, profile["profile_source"])
+    return document_meta({**doc, **profile})
 
 
 @app.delete("/api/documents/{file_name}")
@@ -588,130 +737,92 @@ async def upload_document(
 
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
+        raise HTTPException(status_code=413, detail="Upload exceeds 30 MB limit")
 
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Upload exceeds 50 MB limit")
+        raise HTTPException(status_code=413, detail="Upload exceeds 30 MB limit")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename required")
 
     file_name = safe_filename(file.filename)
-    chunks = extract_chunks(content, file_name)  # PDF or .docx; rejects others
+    require_documents_room(tenant_id, file_name)
+    chunks = extract_chunks(content, file_name)  # every supported type; rejects others
     uri = storage.upload(tenant_id, file_name, content)
+    profile = index_document(tenant_id, file_name, chunks, uri)
+    return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks),
+            "title": profile["title"], "summary": profile["summary"], "questions": profile["questions"]}
 
-    # Embed each chunk so it is retrievable by vector similarity
+
+def index_document(tenant_id: str, file_name: str, chunks: list[dict], uri: str = "",
+                   extra: dict | None = None, profile: dict | None = None) -> dict:
+    """Embed, profile and store one document's chunks. Shared by uploads, web-page
+    imports and the team-answers document. Returns the document profile."""
     try:
         vectors = embedder.embed([c["text"] for c in chunks])
         for c, v in zip(chunks, vectors):
             c["embedding"] = v
     except Exception as exc:
-        log.warning("embedding failed for %s (%s); stored without vectors", file_name, exc)
-
+        # Keyword fallback still works, but answer quality drops sharply: make it loud.
+        log.error("embedding failed for %s (%d chunks): %s; stored without vectors",
+                  file_name, len(chunks), exc)
+    # Summary + starter questions for the document picker; never fails the upload.
+    profile = profile or build_profile(file_name, chunks, generator)
     index_store.upsert_doc(tenant_id, {
         "tenant_id": tenant_id,
         "file_name": file_name,
         "storage_uri": uri,
         "chunks": chunks,
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        **profile,
+        **(extra or {}),
     })
-    log.info("upload tenant=%s file=%s chunks=%d uri=%s", tenant_id, file_name, len(chunks), uri)
-    return {"tenant_id": tenant_id, "file_name": file_name, "chunks": len(chunks)}
+    log.info("index tenant=%s file=%s chunks=%d profile=%s",
+             tenant_id, file_name, len(chunks), profile.get("profile_source"))
+    return profile
+
+
+# ── Routes: web page import ──────────────────────────────────────────────────
+@app.post("/api/import-url")
+def import_url(body: ImportUrlRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Add a public web page (FAQ, policy, help article) as a document."""
+    require_role(principal, "admin", "uploader")
+    final_url, title, text = fetch_page(body.url.strip())
+    parts = urllib.parse.urlsplit(final_url)
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{parts.hostname}{parts.path}".lower()).strip("-")[:80] or "page"
+    file_name = safe_filename(f"{slug}.html")
+    require_documents_room(principal.tenant_id, file_name)
+    chunks = [{"page": 1, "chunk_index": i, "text": c} for i, c in enumerate(chunk_text(text)) if c.strip()]
+    if not chunks:
+        raise HTTPException(status_code=422, detail="No readable text on that page.")
+    profile = index_document(principal.tenant_id, file_name, chunks, uri=final_url,
+                             extra={"source_url": final_url})
+    if title and profile.get("profile_source") != "generated":
+        index_store.update_doc_meta(principal.tenant_id, file_name, {"title": title[:120]})
+    return {"file_name": file_name, "chunks": len(chunks), "title": title or profile["title"],
+            "source_url": final_url}
 
 
 # ── Routes: chat ──────────────────────────────────────────────────────────────
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> ChatResponse:
     tenant_id = principal.tenant_id
+    scope = resolve_scope(tenant_id, req.file_names)   # before the quota: a bad pick costs nothing
     queries_used = enforce_quota(tenant_id)
     history = [t.model_dump() for t in req.history]
 
-    started = time.perf_counter()
-    docs = index_store.list_docs(tenant_id)
-    total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
-
-    # 1) Query rewriting — expand/resolve the question for better retrieval
-    search_query = req.message
-    if hasattr(generator, "rewrite_query"):
-        try:
-            search_query = generator.rewrite_query(req.message, history)
-            if search_query != req.message:
-                log.info("query_rewrite tenant=%s original=%r rewritten=%r", tenant_id, req.message, search_query)
-        except Exception as exc:
-            log.warning("query rewrite failed (%s); using original", exc)
-
-    query_terms = tokenize(search_query)
-    denom = max(len(query_terms), 1)
-
-    # 2) Vector retrieval (top candidates by cosine)
-    candidates: list[dict] = []
-    try:
-        q_vec = embedder.embed_query(search_query)
-        candidates = index_store.vector_search(tenant_id, q_vec, k=30)
-    except Exception as exc:
-        log.warning("vector search failed (%s); keyword fallback", exc)
-
-    # 3) Fallback: if no embedded chunks, scan all chunks (keyword only)
-    if not candidates:
-        for doc in docs:
-            chunks = doc.get("chunks") or [
-                {"page": i + 1, "chunk_index": 0, "text": p}
-                for i, p in enumerate(doc.get("pages", []))
-            ]
-            for ch in chunks:
-                candidates.append({
-                    "file_name": doc["file_name"],
-                    "page": ch.get("page", 1),
-                    "chunk_index": ch.get("chunk_index", 0),
-                    "text": ch.get("text", ""),
-                    "vec_score": 0.0,
-                })
-
-    # 4) Hybrid score: blend cosine with keyword overlap
-    ranked: list[tuple[float, dict]] = []
-    for c in candidates:
-        kw = len(query_terms & tokenize(c["text"])) / denom
-        vec = float(c.get("vec_score", 0.0))
-        score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
-        if score > 0:
-            ranked.append((round(score, 4), c))
-
-    ranked.sort(key=lambda t: t[0], reverse=True)
-    # Drop chunks below relevance floor to avoid poisoning Gemini with noise
-    ranked = [(s, c) for s, c in ranked if s >= 0.05]
-    top = ranked[:6]
-    top_chunks = [c for _, c in top]
-
-    answer = generator.generate(req.message, top_chunks, history)
-
-    citations = [
-        Citation(
-            file_name=c["file_name"],
-            page=c.get("page", 1),
-            chunk_index=c.get("chunk_index", 0),
-            excerpt=c["text"][:280].replace("\n", " "),
-            score=s,
-        )
-        for s, c in top
-    ]
-    latency_ms = max(int((time.perf_counter() - started) * 1000), 1)
-
-    retrieval = RetrievalTrace(
-        engine=RAG_ENGINE_LABEL,
-        query_terms=sorted(query_terms),
-        chunks_searched=total_chunks,
-        candidates_ranked=len(ranked),
-        top_k=len(citations),
-        max_score=top[0][0] if top else 0.0,
-        latency_ms=latency_ms,
-    )
-
-    # Record for knowledge analytics + gap detection (answer stored when confidence is high)
-    insights_store.record(tenant_id, req.message, retrieval.max_score, answer=answer)
+    res = answer_question(tenant_id, req.message, history, scope)
+    answer = res.answer
+    citations = citations_for(res)
+    retrieval = trace_for(res, scope)
+    answer_id = record_answer(principal, req.message, res, scope)
+    conversation_id = save_turn(principal, req.conversation_id, req.message, scope, answer,
+                                citations, retrieval, answer_id)
 
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
-        tenant_id, len(query_terms), total_chunks, len(ranked), len(citations), latency_ms, queries_used,
+        tenant_id, len(res.query_terms), res.chunks_searched, res.candidates_ranked, len(citations), res.latency_ms,
+        queries_used,
     )
     return ChatResponse(
         answer=answer,
@@ -720,7 +831,158 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         tenant_id=tenant_id,
         queries_used=queries_used,
         query_limit=QUERY_LIMIT,
+        answer_id=answer_id,
+        conversation_id=conversation_id,
     )
+
+
+def citations_for(res: AnswerResult) -> list[Citation]:
+    return [
+        Citation(file_name=c["file_name"], page=c.get("page", 1), chunk_index=c.get("chunk_index", 0),
+                 excerpt=c["text"][:280].replace("\n", " "), score=s)
+        for s, c in res.top
+    ]
+
+
+def trace_for(res: AnswerResult, scope: set[str] | None) -> RetrievalTrace:
+    return RetrievalTrace(
+        engine=RAG_ENGINE_LABEL, query_terms=sorted(res.query_terms), chunks_searched=res.chunks_searched,
+        candidates_ranked=res.candidates_ranked, top_k=len(res.top), max_score=res.max_score,
+        latency_ms=res.latency_ms, scoped_to=sorted(scope or []),
+    )
+
+
+def record_answer(principal: Principal, question: str, res: AnswerResult, scope: set[str] | None) -> str | None:
+    """Record for knowledge analytics + gap detection. A miss inside a hand-picked
+    subset says nothing about the whole knowledge base, so scoped questions only
+    count once they're answered."""
+    if scope is None or res.max_score >= GAP_THRESHOLD:
+        return insights_store.record(principal.tenant_id, question, res.max_score, answer=res.answer,
+                                     docs=res.cited_files, uid=principal.uid)
+    return None
+
+
+def save_turn(principal: Principal, conversation_id: str | None, question: str, scope: set[str] | None,
+              answer: str, citations: list[Citation], retrieval: RetrievalTrace, answer_id: str | None) -> str | None:
+    """Append the question and answer to the asker's saved conversation (new if none)."""
+    if principal.uid == "widget-user":
+        return None                       # anonymous widget visitors have no history
+    try:
+        cid = conversation_id
+        now_ms = int(time.time() * 1000)
+        turn = [
+            {"role": "user", "text": question, "timestamp": now_ms, "scope": sorted(scope or [])},
+            {"role": "assistant", "text": answer, "timestamp": now_ms, "answer_id": answer_id,
+             "citations": [c.model_dump() for c in citations], "retrieval": retrieval.model_dump()},
+        ]
+        if not cid or not conversation_store.append(principal.tenant_id, principal.uid, cid, turn):
+            cid = conversation_store.create(principal.tenant_id, principal.uid, question)
+            conversation_store.append(principal.tenant_id, principal.uid, cid, turn)
+        return cid
+    except Exception as exc:              # history is a convenience: never fail the answer
+        log.warning("save_turn failed: %s", exc)
+        return conversation_id
+
+
+# ── Routes: chat (streamed) ──────────────────────────────────────────────────
+@app.post("/api/chat/stream")
+def chat_stream(req: ChatRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> StreamingResponse:
+    """Same answer as /api/chat, sent as newline-delimited JSON while it is written:
+    {"type":"meta"} (sources, known before writing) → {"type":"delta"}… → {"type":"done"}."""
+    tenant_id = principal.tenant_id
+    scope = resolve_scope(tenant_id, req.file_names)
+    queries_used = enforce_quota(tenant_id)
+    history = [t.model_dump() for t in req.history]
+    res = retrieve_for_answer(tenant_id, req.message, history, scope)
+    citations = citations_for(res)
+
+    def line(obj: dict) -> bytes:
+        return (json.dumps(obj, ensure_ascii=False) + "\n").encode()
+
+    def events():
+        yield line({"type": "meta", "citations": [c.model_dump() for c in citations],
+                    "retrieval": trace_for(res, scope).model_dump(),
+                    "queries_used": queries_used, "query_limit": QUERY_LIMIT})
+        parts: list[str] = []
+        try:
+            for piece in generator.generate_stream(req.message, res.chunks, history):
+                parts.append(piece)
+                yield line({"type": "delta", "text": piece})
+        except Exception as exc:
+            log.warning("chat_stream generation failed tenant=%s: %s", tenant_id, exc)
+            if not parts:
+                parts = ["Sorry, something went wrong writing that answer. Try again."]
+                yield line({"type": "delta", "text": parts[0]})
+        res.finish("".join(parts).strip() or NOT_FOUND_ANSWER)
+        retrieval = trace_for(res, scope)
+        answer_id = record_answer(principal, req.message, res, scope)
+        conversation_id = save_turn(principal, req.conversation_id, req.message, scope, res.answer,
+                                    citations, retrieval, answer_id)
+        log.info("chat_stream tenant=%s matches=%d latency_ms=%d", tenant_id, len(citations), res.latency_ms)
+        yield line({"type": "done", "answer": res.answer, "answer_id": answer_id,
+                    "conversation_id": conversation_id, "retrieval": retrieval.model_dump()})
+
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Routes: answer feedback ──────────────────────────────────────────────────
+@app.post("/api/feedback")
+def answer_feedback(body: FeedbackRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    if not insights_store.feedback(principal.tenant_id, body.answer_id, body.helpful, uid=principal.uid):
+        raise HTTPException(status_code=404, detail="Answer not found")
+    if body.conversation_id:
+        conversation_store.mark_feedback(principal.tenant_id, principal.uid, body.conversation_id,
+                                         body.answer_id, body.helpful)
+    return {"ok": True}
+
+
+# ── Routes: saved conversations ──────────────────────────────────────────────
+@app.get("/api/conversations")
+def list_conversations(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    return conversation_store.list(principal.tenant_id, principal.uid)
+
+
+@app.get("/api/conversations/{conversation_id}")
+def get_conversation(conversation_id: str, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    conv = conversation_store.get(principal.tenant_id, principal.uid, conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+@app.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    if not conversation_store.delete(principal.tenant_id, principal.uid, conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"ok": True}
+
+
+# ── Routes: close a knowledge gap with a written answer ──────────────────────
+TEAM_ANSWERS_FILE = "team-answers.md"
+TEAM_ANSWERS_PROFILE = {
+    "title": "Answers from your team", "pages": 0, "profile_source": "generated",
+    "summary": "Short answers your admins wrote for questions the other documents didn't cover.",
+    "questions": [],
+}
+
+
+@app.post("/api/gaps/answer")
+def answer_gap(body: GapAnswerRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Save a written answer as part of the "Answers from your team" document, so the
+    next person who asks gets it, cited like any other source."""
+    require_role(principal, "admin", "uploader")
+    tenant_id = principal.tenant_id
+    existing = index_store.doc_chunks(tenant_id, TEAM_ANSWERS_FILE, limit=2000)
+    q = body.question.strip()
+    entries = [c["text"] for c in existing if not c["text"].lower().startswith(f"q: {q.lower()}\n")]
+    entries.append(f"Q: {q}\nA: {body.answer.strip()}")
+    chunks = [{"page": i + 1, "chunk_index": 0, "text": t} for i, t in enumerate(entries)]
+    questions = [t.split("\n", 1)[0][3:] for t in entries][-4:]
+    index_document(tenant_id, TEAM_ANSWERS_FILE, chunks,
+                   profile={**TEAM_ANSWERS_PROFILE, "pages": len(chunks), "questions": questions})
+    log.info("gap_answered tenant=%s entries=%d", tenant_id, len(chunks))
+    return {"ok": True, "file_name": TEAM_ANSWERS_FILE, "entries": len(chunks)}
 
 
 # ── Routes: solve (agentic workflow) ──────────────────────────────────────────
@@ -782,11 +1044,72 @@ def list_action_audit(principal: Annotated[Principal, Depends(principal_from_aut
 
 
 # ── Routes: insights (knowledge analytics + gap detection) ────────────────────
-@app.get("/api/insights", response_model=InsightsResponse)
-def get_insights(principal: Annotated[Principal, Depends(principal_from_auth)]) -> InsightsResponse:
+def insights_summary(tenant_id: str) -> dict:
+    """The aggregate plus every document's usage, including ones never cited."""
+    data = insights_store.summary(tenant_id)
+    cited = {d["file_name"]: d["citations"] for d in data.get("documents", [])}
+    docs = []
+    for d in index_store.list_docs(tenant_id):
+        docs.append({"file_name": d["file_name"], "title": d.get("title") or d["file_name"],
+                     "uploaded_at": d.get("uploaded_at"), "citations": cited.get(d["file_name"], 0)})
+    docs.sort(key=lambda d: d["citations"], reverse=True)
+    data["documents"] = docs
+    return data
+
+
+@app.get("/api/insights")
+def get_insights(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
     require_role(principal, "admin")
-    data = insights_store.summary(principal.tenant_id)
-    return InsightsResponse(**data)
+    return insights_summary(principal.tenant_id)
+
+
+@app.get("/api/insights/digest")
+def preview_digest(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    subject, text = build_digest(workspace_name(principal.tenant_id), insights_summary(principal.tenant_id),
+                                 config.app_base_url)
+    subscribed = bool(principal.email) and principal.email in digest_store.emails(principal.tenant_id)
+    return {"subject": subject, "text": text, "subscribed": subscribed, "email": principal.email,
+            "email_ready": smtp_configured()}
+
+
+@app.post("/api/insights/digest/subscribe")
+def subscribe_digest(body: DigestSubscribeRequest,
+                     principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    if not principal.email:
+        raise HTTPException(status_code=400, detail="Your account has no email address.")
+    digest_store.set(principal.tenant_id, principal.email, body.on)
+    return {"ok": True, "subscribed": body.on}
+
+
+@app.post("/api/insights/digest/send")
+def send_digest_now(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Email this week's summary to me now."""
+    require_role(principal, "admin")
+    if not principal.email:
+        raise HTTPException(status_code=400, detail="Your account has no email address.")
+    subject, text = build_digest(workspace_name(principal.tenant_id), insights_summary(principal.tenant_id),
+                                 config.app_base_url)
+    return {"sent": send_email(principal.email, subject, text)}
+
+
+@app.post("/api/cron/digest")
+def cron_digest(x_cron_token: Annotated[str | None, Header()] = None) -> dict:
+    """Weekly send to every subscribed admin. Called by Cloud Scheduler with the
+    shared CRON_TOKEN; refused when no token is configured."""
+    expected = os.getenv("CRON_TOKEN", "").strip()
+    if not expected or not x_cron_token or not hmac.compare_digest(x_cron_token, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    sent = 0
+    for tenant_id, emails in digest_store.all().items():
+        try:
+            subject, text = build_digest(workspace_name(tenant_id), insights_summary(tenant_id), config.app_base_url)
+            sent += sum(1 for e in emails if send_email(e, subject, text))
+        except Exception as exc:
+            log.warning("digest failed tenant=%s: %s", tenant_id, exc)
+    log.info("cron_digest sent=%d", sent)
+    return {"sent": sent}
 
 
 # ── Routes: Slack query log (admin-only feed with user attribution) ───────────
@@ -821,6 +1144,10 @@ def invite_member(
     existing = member_store.get_members(tenant_id)
     if any(m.email == body.email for m in existing):
         raise HTTPException(status_code=409, detail="Member with this email already exists")
+    plan = billing.current_plan(billing_store, tenant_id)
+    if plan.seats is not None and len(existing) >= plan.seats:
+        raise HTTPException(status_code=403, detail=(
+            f"Your {plan.name} plan includes {plan.seats} people. Upgrade under Billing to invite more."))
 
     member = MemberRecord(uid=uid, email=body.email, role=body.role, invited_at=now, joined_at=None)
     member_store.add_member(tenant_id, member)
@@ -1005,25 +1332,57 @@ def delete_widget_key(
     return {"ok": True, "key_id": key_id}
 
 
+# ── Outside channels: shared helpers ──────────────────────────────────────────
+def public_api_base(request: Request) -> str:
+    """This API's public origin, for webhook URLs shown in setup steps. Cloud Run
+    terminates TLS in front of us, so the request itself arrives as http."""
+    base = str(request.base_url).rstrip("/")
+    if base.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1)", base):
+        base = "https://" + base.removeprefix("http://")
+    return base
+
+
+def workspace_name(tenant_id: str) -> str:
+    return tenant_profile_store.get_name(tenant_id) or prettify(tenant_id)
+
+
+def quota_or_message(tenant_id: str) -> str | None:
+    """Count a channel question against the daily limit; a message if it's reached."""
+    try:
+        enforce_quota(tenant_id)
+        return None
+    except HTTPException as exc:
+        if exc.status_code == 429:
+            detail = str(exc.detail)
+            return detail if detail.startswith("Your ") else "Your workspace has used today's question limit. It resets tomorrow."
+        raise
+
+
 # ── Routes: Slack integration ─────────────────────────────────────────────────
+SLACK_FAST_PATH_S = 2.5          # Slack wants a reply within 3 s
+_slack_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="slack")
+
+
 @app.post("/api/integrations/slack/connect")
 def slack_connect(
     body: SlackConnectRequest,
+    request: Request,
     principal: Annotated[Principal, Depends(principal_from_auth)],
 ) -> dict:
     require_role(principal, "admin")
+    require_channels(principal.tenant_id, "Slack")
     slack_store.connect(body.team_id, body.team_name, principal.tenant_id)
-    slash_cmd = "/ask"
     log.info("slack_connect tenant=%s team=%s", principal.tenant_id, body.team_id)
     return {
         "ok": True,
         "team_id": body.team_id,
+        "signing_secret_set": bool(SLACK_SIGNING_SECRET),
         "instructions": (
             f"Add a Slack slash command:\n"
-            f"  Command: {slash_cmd}\n"
-            f"  Request URL: {config.app_base_url.replace('web.app', 'run.app') if 'web.app' in config.app_base_url else config.app_base_url}/api/integrations/slack/command\n"
+            f"  Command: /ask\n"
+            f"  Request URL: {public_api_base(request)}/api/integrations/slack/command\n"
             f"  Short description: Ask your company knowledge base\n"
-            f"Set SLACK_SIGNING_SECRET env var on Cloud Run to the signing secret from your Slack app."
+            f"Set SLACK_SIGNING_SECRET on Cloud Run to the signing secret from your Slack app."
         ),
     }
 
@@ -1062,98 +1421,46 @@ def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool
     return hmac.compare_digest(expected, signature)
 
 
-def _run_slack_rag(tenant_id: str, question: str, user_name: str, response_url: str) -> None:
-    """Background task: run RAG and POST result to Slack response_url."""
+def _slack_answer(tenant_id: str, question: str, user_name: str) -> tuple[str, bool]:
+    """(message, ok). Runs the shared pipeline; never raises."""
     try:
-        docs = index_store.list_docs(tenant_id)
-        total_chunks = sum(len(d.get("chunks") or d.get("pages", [])) for d in docs)
-        if not docs:
-            answer = "No documents have been uploaded to your knowledge base yet."
-        else:
-            search_query = question
-            history: list[dict] = []
-            if hasattr(generator, "rewrite_query"):
-                try:
-                    search_query = generator.rewrite_query(question, history)
-                except Exception:
-                    pass
+        res = answer_question(tenant_id, question)
+        insights_store.record(tenant_id, question, res.max_score, answer=res.answer,
+                              source="slack", slack_user=user_name, docs=res.cited_files)
+        text = to_whatsapp(res.answer)          # Slack mrkdwn uses the same *bold* / _italic_
+        refs = source_lines(tenant_id, res.top)
+        if refs:
+            text += "\n_Sources: " + " · ".join(refs) + "_"
+        return f"*{user_name} asked:* {question}\n\n{text}", True
+    except Exception as exc:
+        log.warning("slack_answer failed tenant=%s err=%s", tenant_id, exc)
+        return "⚠️ Something went wrong answering that. Try again.", False
 
-            query_terms = tokenize(search_query)
-            denom = max(len(query_terms), 1)
-            candidates: list[dict] = []
-            try:
-                q_vec = embedder.embed_query(search_query)
-                candidates = index_store.vector_search(tenant_id, q_vec, k=30)
-            except Exception:
-                pass
 
-            if not candidates:
-                for doc in docs:
-                    chunks = doc.get("chunks") or [
-                        {"page": i + 1, "chunk_index": 0, "text": p}
-                        for i, p in enumerate(doc.get("pages", []))
-                    ]
-                    for ch in chunks:
-                        candidates.append({
-                            "file_name": doc["file_name"], "page": ch.get("page", 1),
-                            "chunk_index": ch.get("chunk_index", 0),
-                            "text": ch.get("text", ""), "vec_score": 0.0,
-                        })
-
-            ranked = []
-            for c in candidates:
-                kw = len(query_terms & tokenize(c["text"])) / denom
-                vec = float(c.get("vec_score", 0.0))
-                score = HYBRID_VECTOR_WEIGHT * vec + (1 - HYBRID_VECTOR_WEIGHT) * kw
-                if score >= 0.05:
-                    ranked.append((round(score, 4), c))
-            ranked.sort(key=lambda t: t[0], reverse=True)
-            top_chunks = [c for _, c in ranked[:6]]
-            answer = generator.generate(question, top_chunks, [])
-            max_score = ranked[0][0] if ranked else 0.0
-            insights_store.record(tenant_id, question, max_score, answer=answer,
-                                  source="slack", slack_user=user_name)
-
-        # Build citation footnotes
-        sources = ""
-        if top_chunks if 'top_chunks' in dir() else False:
-            seen = []
-            for c in (top_chunks if 'top_chunks' in dir() else []):
-                ref = f"{c['file_name']} p.{c.get('page', 1)}"
-                if ref not in seen:
-                    seen.append(ref)
-            if seen:
-                sources = "\n_Sources: " + " · ".join(seen) + "_"
-
-        payload = json.dumps({
-            "response_type": "in_channel",
-            "text": f"*{user_name} asked:* {question}\n\n{answer}{sources}",
-        }).encode()
-        req = urllib.request.Request(
-            response_url, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
+def _post_to_slack(response_url: str, text: str, ok: bool) -> None:
+    try:
+        payload = json.dumps({"response_type": "in_channel" if ok else "ephemeral",
+                              "replace_original": True, "text": text}).encode()
+        req = urllib.request.Request(response_url, data=payload,
+                                     headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=10)
     except Exception as exc:
-        log.warning("slack_rag failed tenant=%s err=%s", tenant_id, exc)
-        try:
-            payload = json.dumps({"response_type": "ephemeral", "text": "⚠️ Something went wrong. Try again."}).encode()
-            req = urllib.request.Request(response_url, data=payload,
-                                          headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            pass
+        log.warning("slack response_url post failed: %s", exc)
 
 
 @app.post("/api/integrations/slack/command")
-async def slack_command(request: Request, background_tasks: BackgroundTasks) -> dict:
+async def slack_command(request: Request) -> dict:
     """Slack slash command handler — no Firebase auth, uses Slack signing secret."""
     body = await request.body()
 
-    ts = request.headers.get("X-Slack-Request-Timestamp", "")
-    sig = request.headers.get("X-Slack-Signature", "")
-    if SLACK_SIGNING_SECRET and not _verify_slack_signature(body, ts, sig):
-        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    if SLACK_SIGNING_SECRET:
+        ts = request.headers.get("X-Slack-Request-Timestamp", "")
+        sig = request.headers.get("X-Slack-Signature", "")
+        if not _verify_slack_signature(body, ts, sig):
+            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    elif config.env == "production":
+        # Unsigned requests would let anyone who knows a team ID read that workspace.
+        raise HTTPException(status_code=503, detail="Slack isn't set up: SLACK_SIGNING_SECRET is not configured")
 
     form = await request.form()
     team_id   = str(form.get("team_id", ""))
@@ -1169,10 +1476,362 @@ async def slack_command(request: Request, background_tasks: BackgroundTasks) -> 
         }
     if not text:
         return {"response_type": "ephemeral", "text": "Usage: `/ask [your question]`"}
+    limit_msg = quota_or_message(tenant_id)
+    if limit_msg:
+        return {"response_type": "ephemeral", "text": limit_msg}
 
     log.info("slack_command tenant=%s team=%s user=%s question=%r", tenant_id, team_id, user_name, text)
-    background_tasks.add_task(_run_slack_rag, tenant_id, text, user_name, response_url)
+    job = _slack_pool.submit(_slack_answer, tenant_id, text, user_name)
+    try:
+        # Most answers fit in Slack's 3 s window: reply directly, nothing left running
+        # after the response (Cloud Run throttles CPU once a request has finished).
+        reply, ok = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(job)), SLACK_FAST_PATH_S)
+        return {"response_type": "in_channel" if ok else "ephemeral", "text": reply}
+    except asyncio.TimeoutError:
+        if response_url.startswith("https://hooks.slack.com/"):
+            job.add_done_callback(lambda f: _post_to_slack(response_url, *f.result()))
+        return {"response_type": "in_channel", "text": f"⏳ *{user_name}* asked: _{text}_\nSearching your knowledge base…"}
+
+
+# ── Routes: WhatsApp integration (team members only) ──────────────────────────
+WA_HELP = (
+    "Ask me anything about your company's documents. I answer from them and say which page it came from.\n\n"
+    "*docs*: list the documents\n*new*: start a fresh conversation\n*unlink*: disconnect this phone"
+)
+
+
+class WhatsAppConnectRequest(BaseModel):
+    phone_number_id: str = Field(min_length=5, max_length=32, pattern=r"^\d+$")
+    display_phone: str = Field(min_length=4, max_length=32)
+
+
+class WhatsAppLinkRequest(BaseModel):
+    phone: str = Field(min_length=6, max_length=32)
+
+
+@app.post("/api/integrations/whatsapp/connect")
+def whatsapp_connect(
+    body: WhatsAppConnectRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(principal_from_auth)],
+) -> dict:
+    require_role(principal, "admin")
+    require_channels(principal.tenant_id, "WhatsApp")
+    existing = whatsapp_store.get_number(body.phone_number_id)
+    if existing and existing["tenant_id"] != principal.tenant_id:
+        raise HTTPException(status_code=409, detail="That WhatsApp number is connected to another workspace.")
+    whatsapp_store.connect(body.phone_number_id, body.display_phone.strip(), principal.tenant_id)
+    log.info("whatsapp_connect tenant=%s number=%s", principal.tenant_id, body.phone_number_id)
     return {
-        "response_type": "in_channel",
-        "text": f"⏳ *{user_name}* asked: _{text}_\nSearching your knowledge base…",
+        "ok": True,
+        "phone_number_id": body.phone_number_id,
+        "webhook_url": f"{public_api_base(request)}/api/integrations/whatsapp/webhook",
+        "configured": {
+            "access_token": bool(wa.access_token()),
+            "app_secret": bool(wa.app_secret()),
+            "verify_token": bool(wa.verify_token()),
+        },
     }
+
+
+@app.get("/api/integrations/whatsapp/connections")
+def list_whatsapp_numbers(request: Request, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    return {
+        "numbers": whatsapp_store.list_numbers(principal.tenant_id),
+        "webhook_url": f"{public_api_base(request)}/api/integrations/whatsapp/webhook",
+        "configured": {
+            "access_token": bool(wa.access_token()),
+            "app_secret": bool(wa.app_secret()),
+            "verify_token": bool(wa.verify_token()),
+        },
+    }
+
+
+@app.delete("/api/integrations/whatsapp/connections/{phone_number_id}")
+def whatsapp_disconnect(phone_number_id: str, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    if not whatsapp_store.disconnect(phone_number_id, principal.tenant_id):
+        raise HTTPException(status_code=404, detail="WhatsApp number not found")
+    return {"ok": True, "phone_number_id": phone_number_id}
+
+
+@app.get("/api/integrations/whatsapp/queries")
+def whatsapp_queries(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[dict]:
+    require_role(principal, "admin")
+    return insights_store.channel_queries(principal.tenant_id, "whatsapp")
+
+
+@app.get("/api/integrations/whatsapp/link")
+def whatsapp_my_link(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Any member: is my phone linked, and which number do I message?"""
+    link = whatsapp_store.link_for_member(principal.tenant_id, principal.uid)
+    numbers = whatsapp_store.list_numbers(principal.tenant_id)
+    return {
+        "available": bool(numbers),
+        "send_to": numbers[0]["display_phone"] if numbers else None,
+        "linked": bool(link),
+        "phone": wa.mask(link["wa_id"]) if link else None,
+        "linked_at": link["linked_at"] if link else None,
+    }
+
+
+@app.post("/api/integrations/whatsapp/link")
+def whatsapp_start_link(body: WhatsAppLinkRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Any member: get a one-time code to send from their phone. Sending it from the
+    number they typed proves they hold it; seeing it proves they're signed in."""
+    numbers = whatsapp_store.list_numbers(principal.tenant_id)
+    if not numbers:
+        raise HTTPException(status_code=409, detail="WhatsApp isn't connected for this workspace yet. Ask an admin.")
+    phone = wa.digits(body.phone)
+    if not 8 <= len(phone) <= 15:
+        raise HTTPException(status_code=400, detail="Enter your full number with country code, e.g. +44 7700 900123.")
+    code, expires = whatsapp_store.create_code(principal.tenant_id, principal.uid, principal.email or "", phone)
+    return {"code": code, "message": f"link {code}", "send_to": numbers[0]["display_phone"],
+            "expires_at": expires.isoformat()}
+
+
+@app.delete("/api/integrations/whatsapp/link")
+def whatsapp_unlink_mine(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    link = whatsapp_store.link_for_member(principal.tenant_id, principal.uid)
+    if link:
+        whatsapp_store.unlink(link["wa_id"])
+    return {"ok": True}
+
+
+@app.get("/api/integrations/whatsapp/webhook")
+def whatsapp_verify(request: Request) -> PlainTextResponse:
+    """Meta's one-time subscription check: echo hub.challenge if the token matches."""
+    q = request.query_params
+    expected = wa.verify_token()
+    given = q.get("hub.verify_token", "")
+    if q.get("hub.mode") == "subscribe" and expected and hmac.compare_digest(given, expected):
+        return PlainTextResponse(q.get("hub.challenge", ""))
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+def _still_member(link: dict) -> bool:
+    if config.env == "development" and str(link.get("uid", "")).startswith("dev-"):
+        return True   # dev mock principals aren't stored as members
+    return member_store.get_role(link["tenant_id"], link["uid"]) is not None
+
+
+def _wa_send(m: wa.Incoming, text: str) -> None:
+    try:
+        wa.send_text(m.phone_number_id, m.wa_id, text)
+    except Exception as exc:
+        log.warning("whatsapp send failed number=%s err=%s", m.phone_number_id, exc)
+
+
+def _whatsapp_handle(m: wa.Incoming) -> None:
+    """One incoming message → one reply. Runs inside the webhook request so Cloud Run
+    keeps CPU for it; Meta's retries are dropped by the message-ID claim."""
+    if not m.message_id or not whatsapp_store.claim_message(m.message_id):
+        return
+    number = whatsapp_store.get_number(m.phone_number_id)
+    if not number:
+        log.warning("whatsapp message for unconnected number=%s", m.phone_number_id)
+        return
+    tenant_id = number["tenant_id"]
+    name = workspace_name(tenant_id)
+    wa.mark_read(m.phone_number_id, m.message_id)
+
+    text = m.text
+    if not text:
+        _wa_send(m, "I can only read text messages for now. Type your question.")
+        return
+    low = text.lower().strip()
+
+    code = re.fullmatch(r"link\s*(\d{6})", low)
+    if code:
+        link = whatsapp_store.redeem_code(code.group(1), m.wa_id)
+        if not link or link["tenant_id"] != tenant_id:
+            if link:
+                whatsapp_store.unlink(m.wa_id)
+            _wa_send(m, "That code didn't work. Codes last 15 minutes and must be sent from the number you "
+                        "entered in RAGaaS. Get a new one under Integrations → WhatsApp.")
+            return
+        log.info("whatsapp_linked tenant=%s uid=%s", tenant_id, link["uid"])
+        _wa_send(m, f"✅ Linked to *{name}*.\n\n{WA_HELP}")
+        return
+
+    link = whatsapp_store.get_link(m.wa_id)
+    if not link or link["tenant_id"] != tenant_id or not _still_member(link):
+        if link and link["tenant_id"] == tenant_id:
+            whatsapp_store.unlink(m.wa_id)
+        _wa_send(m, f"This phone isn't linked to *{name}* yet. In RAGaaS, open Integrations → WhatsApp, "
+                    "choose *Link my phone* and send the code it shows you here.")
+        return
+
+    if low in {"help", "hi", "hello", "hey", "menu", "?"}:
+        _wa_send(m, WA_HELP)
+        return
+    if low == "docs":
+        titles = sorted(set(doc_titles(tenant_id).values()))
+        _wa_send(m, "*Documents I can answer from:*\n" + "\n".join(f"• {t}" for t in titles[:40])
+                 if titles else "No documents have been uploaded yet.")
+        return
+    if low in {"new", "reset"}:
+        whatsapp_store.forget(m.wa_id)
+        _wa_send(m, "Started a fresh conversation.")
+        return
+    if low == "unlink":
+        whatsapp_store.unlink(m.wa_id)
+        _wa_send(m, f"This phone is no longer linked to *{name}*.")
+        return
+
+    limit_msg = quota_or_message(tenant_id)
+    if limit_msg:
+        _wa_send(m, limit_msg)
+        return
+    try:
+        res = answer_question(tenant_id, text, whatsapp_store.history(m.wa_id))
+    except Exception as exc:
+        log.warning("whatsapp answer failed tenant=%s err=%s", tenant_id, exc)
+        _wa_send(m, "Sorry, something went wrong. Try again in a minute.")
+        return
+    reply = to_whatsapp(res.answer)
+    refs = source_lines(tenant_id, res.top)
+    if refs:
+        reply += "\n\n_Sources_\n" + "\n".join(f"• {r}" for r in refs)
+    _wa_send(m, reply)
+    whatsapp_store.remember(m.wa_id, text, res.answer)
+    insights_store.record(tenant_id, text, res.max_score, answer=res.answer, docs=res.cited_files,
+                          source="whatsapp", slack_user=link.get("email") or wa.mask(m.wa_id), uid=link["uid"])
+    log.info("whatsapp_answer tenant=%s matches=%d latency_ms=%d", tenant_id, len(res.top), res.latency_ms)
+
+
+@app.post("/api/integrations/whatsapp/webhook")
+async def whatsapp_webhook(request: Request) -> dict:
+    body = await request.body()
+    secret = wa.app_secret()
+    if secret:
+        if not wa.signature_ok(body, request.headers.get("X-Hub-Signature-256"), secret):
+            raise HTTPException(status_code=401, detail="Invalid signature")
+    elif config.env == "production":
+        raise HTTPException(status_code=503, detail="WhatsApp isn't set up: WHATSAPP_APP_SECRET is not configured")
+    try:
+        payload = json.loads(body or b"{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    for m in wa.parse(payload):
+        try:
+            await run_in_threadpool(_whatsapp_handle, m)
+        except Exception as exc:   # always 200: an error retried by Meta would only repeat
+            log.warning("whatsapp handle failed id=%s err=%s", m.message_id, exc)
+    return {"ok": True}
+
+
+# ── Routes: billing (plans + Razorpay subscriptions) ─────────────────────────
+class CheckoutRequest(BaseModel):
+    plan: Literal["starter", "team"]
+
+
+class VerifyRequest(BaseModel):
+    razorpay_payment_id: str = Field(min_length=1, max_length=64)
+    razorpay_subscription_id: str = Field(min_length=1, max_length=64)
+    razorpay_signature: str = Field(min_length=1, max_length=256)
+
+
+@app.get("/api/billing")
+def get_billing(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    tenant_id = principal.tenant_id
+    plan = billing.current_plan(billing_store, tenant_id)
+    acct = billing_store.get(tenant_id)
+    docs = {d["file_name"] for d in index_store.list_docs(tenant_id)} - {"team-answers.md"}
+    return {
+        "enforced": billing.enforced(),
+        "plan": billing.plan_dict(plan),
+        "status": acct.get("status", "none"),
+        "renews_at": acct.get("current_end"),
+        "cancel_at_period_end": bool(acct.get("cancel_at_period_end")),
+        "usage": {
+            "questions": billing_store.questions_this_month(tenant_id),
+            "documents": len(docs),
+            "seats": len(member_store.get_members(tenant_id)),
+        },
+        "plans": [billing.plan_dict(p) for p in billing.PLANS.values()],
+        "checkout_ready": billing.razorpay_ready(),
+        "can_manage": principal.role == "admin",
+    }
+
+
+@app.post("/api/billing/checkout")
+def billing_checkout(body: CheckoutRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    require_role(principal, "admin")
+    if not billing.razorpay_ready():
+        raise HTTPException(status_code=503, detail="Online payment isn't set up yet. Email us and we'll upgrade you.")
+    try:
+        sub = billing.create_subscription(body.plan, principal.tenant_id, principal.email)
+    except Exception as exc:
+        log.warning("razorpay subscription failed tenant=%s: %s", principal.tenant_id, exc)
+        raise HTTPException(status_code=502, detail="Couldn't start checkout. Try again in a minute.")
+    acct = billing_store.get(principal.tenant_id)
+    billing_store.set_plan(principal.tenant_id, acct.get("plan", "free"), status=acct.get("status", "none"),
+                           pending_subscription_id=sub["id"], pending_plan=body.plan)
+    return {"subscription_id": sub["id"], "key_id": os.getenv("RAZORPAY_KEY_ID", "").strip(), "plan": body.plan,
+            "email": principal.email, "workspace": workspace_name(principal.tenant_id)}
+
+
+@app.post("/api/billing/verify")
+def billing_verify(body: VerifyRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Checkout's success handler: check Razorpay's signature, then switch plans."""
+    require_role(principal, "admin")
+    acct = billing_store.get(principal.tenant_id)
+    if acct.get("pending_subscription_id") != body.razorpay_subscription_id:
+        raise HTTPException(status_code=400, detail="That payment isn't for this workspace.")
+    if not billing.checkout_signature_ok(body.razorpay_payment_id, body.razorpay_subscription_id,
+                                         body.razorpay_signature):
+        raise HTTPException(status_code=400, detail="Payment signature didn't match.")
+    plan = acct.get("pending_plan", "starter")
+    billing_store.set_plan(principal.tenant_id, plan, status="active",
+                           subscription_id=body.razorpay_subscription_id, cancel_at_period_end=False,
+                           pending_subscription_id=None, pending_plan=None)
+    log.info("billing_upgraded tenant=%s plan=%s", principal.tenant_id, plan)
+    return {"ok": True, "plan": plan}
+
+
+@app.post("/api/billing/cancel")
+def billing_cancel(principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Cancel at the end of the paid period; the plan stays until then."""
+    require_role(principal, "admin")
+    acct = billing_store.get(principal.tenant_id)
+    sub_id = acct.get("subscription_id")
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="No active subscription.")
+    try:
+        billing.cancel_subscription(sub_id)
+    except Exception as exc:
+        log.warning("razorpay cancel failed tenant=%s: %s", principal.tenant_id, exc)
+        raise HTTPException(status_code=502, detail="Couldn't cancel right now. Try again in a minute.")
+    billing_store.set_plan(principal.tenant_id, acct.get("plan", "free"), cancel_at_period_end=True)
+    return {"ok": True}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request) -> dict:
+    """Razorpay subscription events keep the plan in step with payments (renewals,
+    failed charges, cancellations)."""
+    body = await request.body()
+    if not billing.webhook_signature_ok(body, request.headers.get("X-Razorpay-Signature")):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    event = json.loads(body or b"{}")
+    status = billing.EVENT_STATUS.get(event.get("event", ""))
+    sub = ((event.get("payload") or {}).get("subscription") or {}).get("entity") or {}
+    if not status or not sub.get("id"):
+        return {"ok": True}
+    notes = sub.get("notes") or {}
+    tenant_id = billing_store.find_by_subscription(sub["id"]) or notes.get("tenant_id")
+    if not tenant_id:
+        log.warning("billing webhook: unknown subscription %s", sub["id"])
+        return {"ok": True}
+    plan = notes.get("plan") if notes.get("plan") in billing.PAID_SELF_SERVE else billing_store.get(tenant_id).get("plan")
+    ends = sub.get("current_end")
+    fields = {"status": status, "subscription_id": sub["id"],
+              "current_end": datetime.fromtimestamp(ends, timezone.utc).isoformat() if ends else None}
+    if status in ("cancelled", "completed", "halted"):
+        billing_store.set_plan(tenant_id, "free", **fields)
+    else:
+        billing_store.set_plan(tenant_id, plan or "starter", **fields)
+    log.info("billing_webhook tenant=%s event=%s status=%s", tenant_id, event.get("event"), status)
+    return {"ok": True}

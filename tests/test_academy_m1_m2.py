@@ -66,7 +66,16 @@ def test_new_version_marks_generated_content_stale_and_blocks_publish() -> None:
     # Editing the lesson is the review that clears it.
     mid = detail["modules"][0]["id"]
     client.put(f"/api/academy/modules/{mid}", headers=ADMIN_A, json={"lesson_md": "Reviewed lesson."})
+    # Its questions cite the same document, so they need review too; publishing
+    # must not silently drop them from learners' tests.
+    r = client.post(f"/api/academy/paths/{path['id']}/publish", headers=ADMIN_A)
+    assert r.status_code == 409 and "stale question" in r.json()["detail"]
+    for it in detail["modules"][0]["items"]:
+        assert it["status"] == "stale"
+        keep = {k: it[k] for k in ("type", "stem", "options", "answer", "explanation", "rubric")}
+        assert client.put(f"/api/academy/items/{it['id']}", headers=ADMIN_A, json=keep).status_code == 200
     assert client.post(f"/api/academy/paths/{path['id']}/publish", headers=ADMIN_A).status_code == 200
+    assert client.put(f"/api/academy/modules/{mid}", headers=ADMIN_A, json={"lesson_md": "  "}).status_code == 422
 
 
 def test_delete_document_removes_it_from_search_and_list() -> None:

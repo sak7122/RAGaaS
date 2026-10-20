@@ -15,6 +15,11 @@ RAGaaS/
 │   │   ├── App.tsx            # Shell — auth, chat, upload orchestration
 │   │   ├── firebase.ts        # Firebase Auth SDK (emulator or prod via VITE_ vars)
 │   │   ├── styles.css         # Apple design system (DESIGN.md tokens)
+│   │   ├── marketing/         # Public site shown before sign-in:
+│   │   │                      #   home/ = React homepage (/) + industry pages (/for/<slug>), journey scene,
+│   │   │                      #     in-browser "try your document" (pdf.js, lazy); data from design/examples/companies.json
+│   │   │                      #   pages/*.html + pages/*.ts = /ask, /gaps, /academy, /access ported from design/proto,
+│   │   │                      #   marketing.css scoped under .mk, flight.ts = three.js Ask hero (lazy)
 │   │   └── components/
 │   │       ├── Sidebar.tsx    # Tenant select, auth chip, stats, quota bar
 │   │       ├── ChatWindow.tsx # Message bubbles, citations, loading dots
@@ -106,7 +111,7 @@ Hard limit: **1,000 queries/tenant/day** in `FirestoreUsageStore` and `MemoryUsa
 
 ## Upload Constraints
 
-- PDF only, max 50 MB
+- PDF or .docx, max 30 MB (Cloud Run caps request bodies at 32 MiB)
 - Stored under `local_data/uploads/{tenant_id}/{filename}`
 - Tenant isolation at storage path AND index query level
 

@@ -1,0 +1,1269 @@
+{
+  "_about": "FICTIONAL example workspaces for RAGaaS marketing pages and demos. Every company, person, document, number and quote here is invented; any resemblance to a real business is coincidental. Usage figures are example data and must be labelled as such wherever they are shown.",
+  "_schema": {
+    "documents[]": "file, title, pages, audience (who may read it), restricted (true = never searched for anyone outside audience), summary, questions (starter questions the document answers)",
+    "qa": "the hero question: asked by persona, answered from doc/page, with the exact cited excerpt split into before/highlight/after; also_cites = second source",
+    "gaps[]": "questions no document answers, with how many times they were asked this month",
+    "new_doc": "the page the owner writes to close the top gap",
+    "academy": "the onboarding path built for persona's role, with one quiz question",
+    "example_usage": "illustrative month-3 numbers for the example workspace (not real data)",
+    "slug, plural": "industry page route (/for/<slug>) and the plural used in its headline"
+  },
+  "companies": [
+    {
+      "id": "brightside-dental",
+      "name": "Brightside Dental",
+      "industry": "Dental clinics",
+      "short": "Dental clinic",
+      "slug": "dental",
+      "plural": "dental clinics",
+      "size": "42 staff · 3 clinics",
+      "owner": {
+        "name": "Dr. Anika Rao",
+        "role": "Practice owner"
+      },
+      "persona": {
+        "name": "Maya",
+        "role": "Front-desk coordinator"
+      },
+      "documents": [
+        {
+          "file": "sterilization-infection-control.pdf",
+          "title": "Sterilization & Infection Control",
+          "pages": 38,
+          "audience": "Clinical staff",
+          "restricted": false,
+          "summary": "Instrument reprocessing, autoclave cycles, spore testing and what to do when a cycle fails.",
+          "questions": [
+            "How long is the standard autoclave cycle?",
+            "How often do we run a spore test?",
+            "What if an autoclave cycle fails?"
+          ]
+        },
+        {
+          "file": "patient-intake-sop.pdf",
+          "title": "Patient Intake SOP",
+          "pages": 14,
+          "audience": "Front desk",
+          "restricted": false,
+          "summary": "New-patient forms, ID and insurance checks, medical history updates and consent before the first appointment.",
+          "questions": [
+            "Which forms does a new patient fill in?",
+            "When do we re-check medical history?"
+          ]
+        },
+        {
+          "file": "insurance-billing-guide.pdf",
+          "title": "Insurance & Billing Guide",
+          "pages": 22,
+          "audience": "Front desk",
+          "restricted": false,
+          "summary": "Verifying coverage, pre-authorisations, co-pay collection and what to do with a rejected claim.",
+          "questions": [
+            "When do we need a pre-authorisation?",
+            "How do I resubmit a rejected claim?"
+          ]
+        },
+        {
+          "file": "front-desk-scripts.docx",
+          "title": "Front Desk Phone Scripts",
+          "pages": 9,
+          "audience": "Front desk",
+          "restricted": false,
+          "summary": "What to say for bookings, cancellations, emergencies and running-late calls.",
+          "questions": [
+            "What do I say when a patient cancels late?",
+            "How do I triage a toothache call?"
+          ]
+        },
+        {
+          "file": "emergency-procedures.pdf",
+          "title": "Medical Emergency Procedures",
+          "pages": 11,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Fainting, allergic reaction and cardiac events: who does what, and where the kit and AED live.",
+          "questions": [
+            "Where is the emergency kit?",
+            "Who calls the ambulance during an emergency?"
+          ]
+        },
+        {
+          "file": "employee-handbook.pdf",
+          "title": "Employee Handbook",
+          "pages": 46,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Hours, uniforms, leave, sick days, CPD allowance and the code of conduct.",
+          "questions": [
+            "How many days of leave do I get?",
+            "How do I claim CPD hours?"
+          ]
+        },
+        {
+          "file": "payroll-bonus-policy.pdf",
+          "title": "Payroll & Bonus Policy",
+          "pages": 8,
+          "audience": "Owners only",
+          "restricted": true,
+          "summary": "Pay bands, overtime rules and the quarterly bonus formula.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "How long is the standard autoclave cycle?",
+        "answer": "134°C for at least 4 minutes on the wrapped-instrument cycle, then leave the packs to dry fully before storing them.",
+        "doc": "sterilization-infection-control.pdf",
+        "page": 12,
+        "excerpt": {
+          "before": "Load trays so that steam reaches every surface. ",
+          "highlight": "Wrapped instruments are processed at 134°C for a minimum of 4 minutes",
+          "after": ", followed by a full drying phase before packs are stored."
+        },
+        "also_cites": {
+          "doc": "patient-intake-sop.pdf",
+          "page": 3
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can patients pay in instalments?",
+          "asks": 11
+        },
+        {
+          "question": "What if the X-ray sensor fails mid-appointment?",
+          "asks": 7
+        },
+        {
+          "question": "Do we accept walk-ins on Saturdays?",
+          "asks": 5
+        }
+      ],
+      "new_doc": {
+        "title": "Payment Plans Policy",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Front desk onboarding",
+        "role": "Front-desk coordinator",
+        "due_days": 14,
+        "lessons": [
+          {
+            "title": "Welcome to Brightside",
+            "source": "Employee Handbook"
+          },
+          {
+            "title": "Checking in a new patient",
+            "source": "Patient Intake SOP"
+          },
+          {
+            "title": "Insurance and co-pays",
+            "source": "Insurance & Billing Guide"
+          },
+          {
+            "title": "When the phone rings",
+            "source": "Front Desk Phone Scripts"
+          }
+        ],
+        "quiz": {
+          "question": "A new patient arrives without their insurance card. What do you do first?",
+          "options": [
+            "Cancel the appointment",
+            "Verify coverage by phone with the insurer",
+            "Charge the full fee"
+          ],
+          "answer": 1,
+          "source": "Insurance & Billing Guide, p. 5"
+        }
+      },
+      "example_usage": {
+        "questions_month": 214,
+        "answered_with_source": 191,
+        "gaps_closed": 6,
+        "certified": 4
+      }
+    },
+    {
+      "id": "kestrel-freight",
+      "name": "Kestrel Freight",
+      "industry": "Regional logistics",
+      "short": "Logistics firm",
+      "slug": "logistics",
+      "plural": "logistics firms",
+      "size": "60 staff · 2 depots",
+      "owner": {
+        "name": "Tom Okoye",
+        "role": "Operations director"
+      },
+      "persona": {
+        "name": "Daniel",
+        "role": "New driver"
+      },
+      "documents": [
+        {
+          "file": "driver-handbook.pdf",
+          "title": "Driver Handbook",
+          "pages": 52,
+          "audience": "Drivers",
+          "restricted": false,
+          "summary": "Driving hours, breaks, vehicle checks, fuel cards and conduct on customer sites.",
+          "questions": [
+            "How long can I drive before a break?",
+            "What do I check before leaving the depot?",
+            "Who do I call after a breakdown?"
+          ]
+        },
+        {
+          "file": "dangerous-goods-procedure.pdf",
+          "title": "Dangerous Goods Procedure",
+          "pages": 27,
+          "audience": "Drivers & warehouse",
+          "restricted": false,
+          "summary": "Labels, paperwork and placards for hazardous loads, and what to do after a spill.",
+          "questions": [
+            "Which loads need placards?",
+            "What do I do after a spill?"
+          ]
+        },
+        {
+          "file": "customer-sla-terms.pdf",
+          "title": "Customer Delivery Terms",
+          "pages": 16,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Delivery windows, failed-delivery rules, proof of delivery and damage claims.",
+          "questions": [
+            "How long do we wait at a closed site?",
+            "What counts as proof of delivery?"
+          ]
+        },
+        {
+          "file": "dispatch-playbook.docx",
+          "title": "Dispatch Playbook",
+          "pages": 19,
+          "audience": "Dispatch",
+          "restricted": false,
+          "summary": "Route planning, re-routing after delays and how to tell a customer about a late load.",
+          "questions": [
+            "How do I re-route a delayed load?",
+            "When do we warn a customer about a delay?"
+          ]
+        },
+        {
+          "file": "incident-reporting.pdf",
+          "title": "Incident Reporting",
+          "pages": 7,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "What counts as an incident, the form to use and the 24-hour reporting deadline.",
+          "questions": [
+            "What counts as a reportable incident?",
+            "How fast do I report a near miss?"
+          ]
+        },
+        {
+          "file": "rate-card-2026.pdf",
+          "title": "Rate Card 2026",
+          "pages": 6,
+          "audience": "Sales & directors",
+          "restricted": true,
+          "summary": "Per-pallet and per-mile pricing, surcharges and contract discounts.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "How long can I drive before I have to take a break?",
+        "answer": "4 hours 30 minutes of driving, then a break of at least 45 minutes. You can split it into 15 and then 30 minutes.",
+        "doc": "driver-handbook.pdf",
+        "page": 9,
+        "excerpt": {
+          "before": "Your tachograph records every minute behind the wheel. ",
+          "highlight": "After 4 hours 30 minutes of driving you must take a break of at least 45 minutes",
+          "after": ", which may be split into 15 minutes followed by 30 minutes."
+        },
+        "also_cites": {
+          "doc": "incident-reporting.pdf",
+          "page": 2
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can I take the van home overnight?",
+          "asks": 9
+        },
+        {
+          "question": "What's the process for a lost fuel card?",
+          "asks": 6
+        },
+        {
+          "question": "Who approves overtime on weekends?",
+          "asks": 4
+        }
+      ],
+      "new_doc": {
+        "title": "Vehicle Use Outside Shifts",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Driver induction",
+        "role": "New driver",
+        "due_days": 10,
+        "lessons": [
+          {
+            "title": "Welcome to Kestrel",
+            "source": "Driver Handbook"
+          },
+          {
+            "title": "Your first vehicle check",
+            "source": "Driver Handbook"
+          },
+          {
+            "title": "Hazardous loads",
+            "source": "Dangerous Goods Procedure"
+          },
+          {
+            "title": "When something goes wrong",
+            "source": "Incident Reporting"
+          }
+        ],
+        "quiz": {
+          "question": "You've driven 4 hours 30 minutes. What's the shortest legal break?",
+          "options": [
+            "15 minutes",
+            "45 minutes, or 15 then 30",
+            "No break until the shift ends"
+          ],
+          "answer": 1,
+          "source": "Driver Handbook, p. 9"
+        }
+      },
+      "example_usage": {
+        "questions_month": 168,
+        "answered_with_source": 149,
+        "gaps_closed": 5,
+        "certified": 7
+      }
+    },
+    {
+      "id": "fern-and-fable",
+      "name": "Fern & Fable",
+      "industry": "Direct-to-consumer skincare",
+      "short": "Skincare brand",
+      "slug": "skincare",
+      "plural": "skincare brands",
+      "size": "25 staff · online store",
+      "owner": {
+        "name": "Priya Nair",
+        "role": "Founder"
+      },
+      "persona": {
+        "name": "Leo",
+        "role": "Customer support agent"
+      },
+      "documents": [
+        {
+          "file": "returns-refunds-policy.pdf",
+          "title": "Returns & Refunds Policy",
+          "pages": 6,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Return windows, opened-product rules, refunds versus store credit and damaged-in-transit claims.",
+          "questions": [
+            "Can a customer return an opened serum?",
+            "How long do refunds take?",
+            "What if an order arrives broken?"
+          ]
+        },
+        {
+          "file": "ingredient-glossary.pdf",
+          "title": "Ingredient Glossary",
+          "pages": 31,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Every active ingredient we use, what it does, and which products are fragrance-free or pregnancy-safe.",
+          "questions": [
+            "Which products are fragrance-free?",
+            "Is the night cream safe during pregnancy?"
+          ]
+        },
+        {
+          "file": "support-macros.docx",
+          "title": "Support Macros",
+          "pages": 12,
+          "audience": "Support team",
+          "restricted": false,
+          "summary": "Approved replies for shipping delays, reactions, discount codes and subscription changes.",
+          "questions": [
+            "What do we say about a skin reaction?",
+            "How do I pause a subscription?"
+          ]
+        },
+        {
+          "file": "shipping-guide.pdf",
+          "title": "Shipping Guide",
+          "pages": 8,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Carriers, delivery times by region, customs for international orders and lost-parcel steps.",
+          "questions": [
+            "How long does shipping to Canada take?",
+            "What do we do about a lost parcel?"
+          ]
+        },
+        {
+          "file": "brand-voice-guide.pdf",
+          "title": "Brand Voice Guide",
+          "pages": 15,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "How we write: tone, words we avoid, and examples for emails, product pages and social.",
+          "questions": [
+            "Can we say a product is 'clinically proven'?",
+            "How formal should support emails be?"
+          ]
+        },
+        {
+          "file": "wholesale-price-list.pdf",
+          "title": "Wholesale Price List",
+          "pages": 4,
+          "audience": "Founders & wholesale",
+          "restricted": true,
+          "summary": "Stockist pricing, minimum orders and margin floors.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "Can a customer return an opened serum?",
+        "answer": "Yes, within 30 days of delivery as long as at least half the product is left. Refund to the original payment method.",
+        "doc": "returns-refunds-policy.pdf",
+        "page": 2,
+        "excerpt": {
+          "before": "We want customers to try our products without worry. ",
+          "highlight": "Opened products can be returned within 30 days of delivery if at least half the product remains",
+          "after": "; refunds go back to the original payment method."
+        },
+        "also_cites": {
+          "doc": "support-macros.docx",
+          "page": 4
+        }
+      },
+      "gaps": [
+        {
+          "question": "Do we ship to PO boxes?",
+          "asks": 13
+        },
+        {
+          "question": "Can customers swap a product in a gift set?",
+          "asks": 8
+        },
+        {
+          "question": "Is the packaging recyclable kerbside?",
+          "asks": 6
+        }
+      ],
+      "new_doc": {
+        "title": "PO Box & Address Rules",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Support onboarding",
+        "role": "Customer support agent",
+        "due_days": 7,
+        "lessons": [
+          {
+            "title": "Who we are",
+            "source": "Brand Voice Guide"
+          },
+          {
+            "title": "Returns without the back-and-forth",
+            "source": "Returns & Refunds Policy"
+          },
+          {
+            "title": "Ingredients customers ask about",
+            "source": "Ingredient Glossary"
+          },
+          {
+            "title": "Replies that sound like us",
+            "source": "Support Macros"
+          }
+        ],
+        "quiz": {
+          "question": "A customer used a third of a serum and wants to return it. What do you tell them?",
+          "options": [
+            "No returns on opened products",
+            "Yes, within 30 days, refund to original payment",
+            "Store credit only"
+          ],
+          "answer": 1,
+          "source": "Returns & Refunds Policy, p. 2"
+        }
+      },
+      "example_usage": {
+        "questions_month": 302,
+        "answered_with_source": 276,
+        "gaps_closed": 9,
+        "certified": 3
+      }
+    },
+    {
+      "id": "lumen-analytics",
+      "name": "Lumen Analytics",
+      "industry": "B2B software",
+      "short": "SaaS startup",
+      "slug": "saas",
+      "plural": "SaaS startups",
+      "size": "35 staff · remote",
+      "owner": {
+        "name": "Sofia Mendes",
+        "role": "COO"
+      },
+      "persona": {
+        "name": "Arjun",
+        "role": "New backend engineer"
+      },
+      "documents": [
+        {
+          "file": "incident-runbook.pdf",
+          "title": "Incident Runbook",
+          "pages": 18,
+          "audience": "Engineering",
+          "restricted": false,
+          "summary": "Severity levels, who gets paged, how to run an incident call and when to post on the status page.",
+          "questions": [
+            "Who do I page for a Sev-1 at night?",
+            "When do we update the status page?",
+            "How do I roll back a deploy?"
+          ]
+        },
+        {
+          "file": "engineering-onboarding.pdf",
+          "title": "Engineering Onboarding",
+          "pages": 24,
+          "audience": "Engineering",
+          "restricted": false,
+          "summary": "Laptop setup, repo access, local environment, code review norms and the first-week checklist.",
+          "questions": [
+            "How do I get access to production logs?",
+            "What are the code review rules?"
+          ]
+        },
+        {
+          "file": "security-policy.pdf",
+          "title": "Security Policy",
+          "pages": 20,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Passwords, 2FA, customer data handling, laptop encryption and reporting a lost device.",
+          "questions": [
+            "Can I copy customer data to my laptop?",
+            "How do I report a lost laptop?"
+          ]
+        },
+        {
+          "file": "customer-success-playbook.docx",
+          "title": "Customer Success Playbook",
+          "pages": 16,
+          "audience": "CS & Sales",
+          "restricted": false,
+          "summary": "Onboarding new accounts, health scores, renewal reminders and escalation paths.",
+          "questions": [
+            "When does a renewal reminder go out?",
+            "How do I escalate an unhappy customer?"
+          ]
+        },
+        {
+          "file": "employee-handbook.pdf",
+          "title": "Employee Handbook",
+          "pages": 34,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Remote work, equipment budget, time off, expenses and how we communicate.",
+          "questions": [
+            "What's the home-office budget?",
+            "How do I book time off?"
+          ]
+        },
+        {
+          "file": "pricing-discounts.pdf",
+          "title": "Pricing & Discount Approvals",
+          "pages": 5,
+          "audience": "Sales leadership",
+          "restricted": true,
+          "summary": "List prices, discount bands and who signs off on each.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "Who do I page for a Sev-1 at night?",
+        "answer": "The primary on-call engineer through the paging tool. If nobody acknowledges within 15 minutes, page the engineering manager.",
+        "doc": "incident-runbook.pdf",
+        "page": 3,
+        "excerpt": {
+          "before": "A Sev-1 means customers cannot use the product. ",
+          "highlight": "Page the primary on-call engineer; if the page is not acknowledged within 15 minutes, page the engineering manager",
+          "after": " and open an incident channel."
+        },
+        "also_cites": {
+          "doc": "engineering-onboarding.pdf",
+          "page": 9
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can I expense a coworking space?",
+          "asks": 10
+        },
+        {
+          "question": "How do we deprecate a public API endpoint?",
+          "asks": 6
+        },
+        {
+          "question": "Who owns the staging database?",
+          "asks": 5
+        }
+      ],
+      "new_doc": {
+        "title": "Coworking & Travel Expenses",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Engineering onboarding",
+        "role": "Backend engineer",
+        "due_days": 14,
+        "lessons": [
+          {
+            "title": "Your first day",
+            "source": "Engineering Onboarding"
+          },
+          {
+            "title": "Shipping safely",
+            "source": "Engineering Onboarding"
+          },
+          {
+            "title": "When production breaks",
+            "source": "Incident Runbook"
+          },
+          {
+            "title": "Customer data rules",
+            "source": "Security Policy"
+          }
+        ],
+        "quiz": {
+          "question": "A Sev-1 page hasn't been acknowledged after 15 minutes. What next?",
+          "options": [
+            "Wait for the morning",
+            "Page the engineering manager",
+            "Post on the status page first"
+          ],
+          "answer": 1,
+          "source": "Incident Runbook, p. 3"
+        }
+      },
+      "example_usage": {
+        "questions_month": 241,
+        "answered_with_source": 219,
+        "gaps_closed": 7,
+        "certified": 5
+      }
+    },
+    {
+      "id": "okafor-lim-architects",
+      "name": "Okafor & Lim Architects",
+      "industry": "Architecture studio",
+      "short": "Architecture studio",
+      "slug": "architecture",
+      "plural": "architecture studios",
+      "size": "18 staff · 1 studio",
+      "owner": {
+        "name": "Ngozi Okafor",
+        "role": "Partner"
+      },
+      "persona": {
+        "name": "Hana",
+        "role": "Junior architect"
+      },
+      "documents": [
+        {
+          "file": "project-delivery-handbook.pdf",
+          "title": "Project Delivery Handbook",
+          "pages": 44,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Stages from brief to handover, sign-offs at each stage and how client changes are recorded.",
+          "questions": [
+            "Who signs off a stage report?",
+            "How do we record a client change?"
+          ]
+        },
+        {
+          "file": "cad-bim-standards.pdf",
+          "title": "CAD & BIM Standards",
+          "pages": 29,
+          "audience": "Design team",
+          "restricted": false,
+          "summary": "Layer names, file naming, model levels of detail and the drawing issue process.",
+          "questions": [
+            "How do I name a drawing file?",
+            "What detail level for planning drawings?"
+          ]
+        },
+        {
+          "file": "site-visit-safety.pdf",
+          "title": "Site Visit Safety",
+          "pages": 9,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "PPE, signing in on site, lone visits and what to do if you see an unsafe condition.",
+          "questions": [
+            "What PPE do I need on site?",
+            "Can I visit a site alone?"
+          ]
+        },
+        {
+          "file": "fee-proposal-template.docx",
+          "title": "Fee Proposal Template",
+          "pages": 7,
+          "audience": "Partners & associates",
+          "restricted": false,
+          "summary": "How we scope and price a project, with standard exclusions.",
+          "questions": [
+            "What's excluded from a standard fee?"
+          ]
+        },
+        {
+          "file": "studio-handbook.pdf",
+          "title": "Studio Handbook",
+          "pages": 26,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Hours, CPD, studio etiquette, time sheets and leave.",
+          "questions": [
+            "When are time sheets due?",
+            "How much CPD do we get?"
+          ]
+        },
+        {
+          "file": "partner-compensation.pdf",
+          "title": "Partner Compensation",
+          "pages": 5,
+          "audience": "Partners only",
+          "restricted": true,
+          "summary": "Profit share and partner drawings.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "How do I name a drawing file?",
+        "answer": "Project number, then zone, level, type, and a four-digit sheet number, separated by hyphens.",
+        "doc": "cad-bim-standards.pdf",
+        "page": 6,
+        "excerpt": {
+          "before": "Consistent names keep the model federated. ",
+          "highlight": "Name every drawing as project number-zone-level-type-sheet, with a four-digit sheet number",
+          "after": ", for example 2417-A-02-PL-0101."
+        },
+        "also_cites": {
+          "doc": "project-delivery-handbook.pdf",
+          "page": 18
+        }
+      },
+      "gaps": [
+        {
+          "question": "Which consultants do we use for structures?",
+          "asks": 8
+        },
+        {
+          "question": "How do we archive a finished project?",
+          "asks": 5
+        },
+        {
+          "question": "Can I work from home on issue days?",
+          "asks": 3
+        }
+      ],
+      "new_doc": {
+        "title": "Preferred Consultants List",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Studio induction",
+        "role": "Junior architect",
+        "due_days": 21,
+        "lessons": [
+          {
+            "title": "How a project runs here",
+            "source": "Project Delivery Handbook"
+          },
+          {
+            "title": "Drawings the studio way",
+            "source": "CAD & BIM Standards"
+          },
+          {
+            "title": "Safe on site",
+            "source": "Site Visit Safety"
+          },
+          {
+            "title": "Time, leave and CPD",
+            "source": "Studio Handbook"
+          }
+        ],
+        "quiz": {
+          "question": "Which of these follows the drawing naming rule?",
+          "options": [
+            "Kitchen plan v2 final.pdf",
+            "2417-A-02-PL-0101",
+            "PL-0101-2417"
+          ],
+          "answer": 1,
+          "source": "CAD & BIM Standards, p. 6"
+        }
+      },
+      "example_usage": {
+        "questions_month": 96,
+        "answered_with_source": 88,
+        "gaps_closed": 3,
+        "certified": 2
+      }
+    },
+    {
+      "id": "saffron-table",
+      "name": "Saffron Table Group",
+      "industry": "Restaurants",
+      "short": "Restaurant group",
+      "slug": "restaurants",
+      "plural": "restaurant groups",
+      "size": "90 staff · 3 restaurants",
+      "owner": {
+        "name": "Marco Bianchi",
+        "role": "Group operations manager"
+      },
+      "persona": {
+        "name": "Aisha",
+        "role": "New line cook"
+      },
+      "documents": [
+        {
+          "file": "food-safety-haccp.pdf",
+          "title": "Food Safety (HACCP) Plan",
+          "pages": 33,
+          "audience": "Kitchen",
+          "restricted": false,
+          "summary": "Critical control points, cooking and cooling temperatures, labelling and daily checks.",
+          "questions": [
+            "What temperature must chicken reach?",
+            "How fast must stock cool?",
+            "How long do we keep prepped sauces?"
+          ]
+        },
+        {
+          "file": "allergen-matrix.pdf",
+          "title": "Allergen Matrix",
+          "pages": 12,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "The 14 allergens across every dish on each menu, and how to handle an allergy order.",
+          "questions": [
+            "Is the risotto nut-free?",
+            "What do I do with an allergy order?"
+          ]
+        },
+        {
+          "file": "open-close-checklists.docx",
+          "title": "Opening & Closing Checklists",
+          "pages": 6,
+          "audience": "Kitchen & front of house",
+          "restricted": false,
+          "summary": "Fridge checks, deliveries, cleaning schedule and lock-up for each site.",
+          "questions": [
+            "What do I check on opening?"
+          ]
+        },
+        {
+          "file": "staff-handbook.pdf",
+          "title": "Staff Handbook",
+          "pages": 28,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Shifts, swaps, staff meals, uniforms, tips and the disciplinary process.",
+          "questions": [
+            "How do I swap a shift?",
+            "How are tips shared?"
+          ]
+        },
+        {
+          "file": "supplier-contacts.pdf",
+          "title": "Supplier Contacts & Pricing",
+          "pages": 4,
+          "audience": "Managers only",
+          "restricted": true,
+          "summary": "Supplier accounts, order cut-offs and negotiated prices.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "What temperature must chicken reach?",
+        "answer": "A core temperature of at least 75°C, checked with a probe in the thickest part and written in the cooking log.",
+        "doc": "food-safety-haccp.pdf",
+        "page": 7,
+        "excerpt": {
+          "before": "Cooking is a critical control point. ",
+          "highlight": "Poultry must reach a core temperature of at least 75°C, checked with a probe in the thickest part",
+          "after": " and recorded in the cooking log."
+        },
+        "also_cites": {
+          "doc": "open-close-checklists.docx",
+          "page": 2
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can we serve leftover staff meal the next day?",
+          "asks": 12
+        },
+        {
+          "question": "Who do I call if the walk-in fridge fails at night?",
+          "asks": 7
+        },
+        {
+          "question": "Do we do birthday desserts for free?",
+          "asks": 6
+        }
+      ],
+      "new_doc": {
+        "title": "Staff Meal Rules",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Kitchen induction",
+        "role": "Line cook",
+        "due_days": 7,
+        "lessons": [
+          {
+            "title": "Welcome to the line",
+            "source": "Staff Handbook"
+          },
+          {
+            "title": "Temperatures that matter",
+            "source": "Food Safety (HACCP) Plan"
+          },
+          {
+            "title": "Allergy orders",
+            "source": "Allergen Matrix"
+          },
+          {
+            "title": "Open and close",
+            "source": "Opening & Closing Checklists"
+          }
+        ],
+        "quiz": {
+          "question": "What core temperature must cooked chicken reach?",
+          "options": [
+            "63°C",
+            "At least 75°C",
+            "Until it looks done"
+          ],
+          "answer": 1,
+          "source": "Food Safety (HACCP) Plan, p. 7"
+        }
+      },
+      "example_usage": {
+        "questions_month": 188,
+        "answered_with_source": 170,
+        "gaps_closed": 6,
+        "certified": 11
+      }
+    },
+    {
+      "id": "ledgerline",
+      "name": "Ledgerline Accounting",
+      "industry": "Accounting firm",
+      "short": "Accounting firm",
+      "slug": "accounting",
+      "plural": "accounting firms",
+      "size": "22 staff · 1 office",
+      "owner": {
+        "name": "Helen Achterberg",
+        "role": "Managing partner"
+      },
+      "persona": {
+        "name": "Ravi",
+        "role": "Junior accountant"
+      },
+      "documents": [
+        {
+          "file": "client-onboarding-checklist.pdf",
+          "title": "Client Onboarding Checklist",
+          "pages": 10,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Identity checks, engagement letters, data requests and setting up a new client file.",
+          "questions": [
+            "What ID do we need from a new client?",
+            "When do we send the engagement letter?"
+          ]
+        },
+        {
+          "file": "tax-season-procedures.pdf",
+          "title": "Tax Season Procedures",
+          "pages": 24,
+          "audience": "Accountants",
+          "restricted": false,
+          "summary": "Deadlines, review steps, who signs returns and how to chase missing paperwork.",
+          "questions": [
+            "Who signs off a tax return?",
+            "How do we chase missing documents?"
+          ]
+        },
+        {
+          "file": "data-retention-policy.pdf",
+          "title": "Data Retention Policy",
+          "pages": 8,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "How long we keep client records, where, and how they are destroyed.",
+          "questions": [
+            "How long do we keep client records?"
+          ]
+        },
+        {
+          "file": "engagement-letter-templates.docx",
+          "title": "Engagement Letter Templates",
+          "pages": 14,
+          "audience": "Accountants",
+          "restricted": false,
+          "summary": "Standard letters for bookkeeping, payroll and annual accounts, with scope wording.",
+          "questions": [
+            "Which letter covers payroll only?"
+          ]
+        },
+        {
+          "file": "fee-schedule.pdf",
+          "title": "Fee Schedule",
+          "pages": 3,
+          "audience": "Partners only",
+          "restricted": true,
+          "summary": "Hourly rates, fixed-fee packages and discount authority.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "How long do we keep client records?",
+        "answer": "Six years after the end of the engagement, then they are securely destroyed and the destruction is logged.",
+        "doc": "data-retention-policy.pdf",
+        "page": 3,
+        "excerpt": {
+          "before": "Records include working papers and correspondence. ",
+          "highlight": "Client records are kept for six years after the engagement ends and then securely destroyed",
+          "after": ", with the destruction recorded in the retention log."
+        },
+        "also_cites": {
+          "doc": "client-onboarding-checklist.pdf",
+          "page": 8
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can we accept a client paid in crypto?",
+          "asks": 6
+        },
+        {
+          "question": "Who covers a client when their accountant is on leave?",
+          "asks": 5
+        },
+        {
+          "question": "Do we do personal returns for staff?",
+          "asks": 3
+        }
+      ],
+      "new_doc": {
+        "title": "Client Cover During Leave",
+        "closes": 1
+      },
+      "academy": {
+        "path": "Junior accountant induction",
+        "role": "Junior accountant",
+        "due_days": 30,
+        "lessons": [
+          {
+            "title": "Bringing on a client",
+            "source": "Client Onboarding Checklist"
+          },
+          {
+            "title": "Tax season, step by step",
+            "source": "Tax Season Procedures"
+          },
+          {
+            "title": "Keeping and destroying records",
+            "source": "Data Retention Policy"
+          },
+          {
+            "title": "The right engagement letter",
+            "source": "Engagement Letter Templates"
+          }
+        ],
+        "quiz": {
+          "question": "An engagement ended in 2020. Until when do we keep the records?",
+          "options": [
+            "Until the client asks",
+            "Six years after it ended",
+            "Forever"
+          ],
+          "answer": 1,
+          "source": "Data Retention Policy, p. 3"
+        }
+      },
+      "example_usage": {
+        "questions_month": 121,
+        "answered_with_source": 109,
+        "gaps_closed": 4,
+        "certified": 3
+      }
+    },
+    {
+      "id": "helio-solar",
+      "name": "Helio Solar Installers",
+      "industry": "Solar installation",
+      "short": "Solar installer",
+      "slug": "solar",
+      "plural": "solar installers",
+      "size": "40 staff · 4 crews",
+      "owner": {
+        "name": "Grace Mwangi",
+        "role": "Founder"
+      },
+      "persona": {
+        "name": "Sam",
+        "role": "New installer"
+      },
+      "documents": [
+        {
+          "file": "roof-safety-manual.pdf",
+          "title": "Roof Safety Manual",
+          "pages": 30,
+          "audience": "Install crews",
+          "restricted": false,
+          "summary": "Harnesses, edge protection, ladders, weather limits and rescue plans for roof work.",
+          "questions": [
+            "When do we stop work for wind?",
+            "What harness checks before going up?"
+          ]
+        },
+        {
+          "file": "install-checklist.pdf",
+          "title": "Installation Checklist",
+          "pages": 15,
+          "audience": "Install crews",
+          "restricted": false,
+          "summary": "Mounting, cabling, inverter setup, commissioning tests and handover photos.",
+          "questions": [
+            "Which photos do we take at handover?",
+            "What do we test before switching on?"
+          ]
+        },
+        {
+          "file": "warranty-terms.pdf",
+          "title": "Warranty Terms",
+          "pages": 9,
+          "audience": "Everyone",
+          "restricted": false,
+          "summary": "Panel, inverter and workmanship warranties, and what voids them.",
+          "questions": [
+            "How long is the workmanship warranty?"
+          ]
+        },
+        {
+          "file": "permit-guide.docx",
+          "title": "Permit Guide by Area",
+          "pages": 21,
+          "audience": "Office & crew leads",
+          "restricted": false,
+          "summary": "Which permits each area needs, lead times and who submits them.",
+          "questions": [
+            "How long does a permit take?"
+          ]
+        },
+        {
+          "file": "commission-plan.pdf",
+          "title": "Sales Commission Plan",
+          "pages": 4,
+          "audience": "Sales & founders",
+          "restricted": true,
+          "summary": "Commission rates, clawbacks and payout dates.",
+          "questions": []
+        }
+      ],
+      "qa": {
+        "question": "When do we stop roof work for wind?",
+        "answer": "When gusts reach 40 km/h, or sooner if panels can't be handled safely. The crew lead makes the call and logs it.",
+        "doc": "roof-safety-manual.pdf",
+        "page": 14,
+        "excerpt": {
+          "before": "Panels act like sails in the wind. ",
+          "highlight": "Stop all roof work when gusts reach 40 km/h, or earlier if panels cannot be handled safely",
+          "after": "; the crew lead decides and records it in the job log."
+        },
+        "also_cites": {
+          "doc": "install-checklist.pdf",
+          "page": 2
+        }
+      },
+      "gaps": [
+        {
+          "question": "Can we install on a slate roof?",
+          "asks": 9
+        },
+        {
+          "question": "What if the customer isn't home at handover?",
+          "asks": 6
+        },
+        {
+          "question": "Do we remove old panels?",
+          "asks": 4
+        }
+      ],
+      "new_doc": {
+        "title": "Slate Roof Method Statement",
+        "closes": 0
+      },
+      "academy": {
+        "path": "Installer induction",
+        "role": "Installer",
+        "due_days": 14,
+        "lessons": [
+          {
+            "title": "Safe at height",
+            "source": "Roof Safety Manual"
+          },
+          {
+            "title": "A clean install",
+            "source": "Installation Checklist"
+          },
+          {
+            "title": "Handover done right",
+            "source": "Installation Checklist"
+          },
+          {
+            "title": "What the warranty covers",
+            "source": "Warranty Terms"
+          }
+        ],
+        "quiz": {
+          "question": "Gusts hit 42 km/h mid-install. What happens?",
+          "options": [
+            "Keep going, finish the row",
+            "Stop roof work; the crew lead logs it",
+            "Only stop if it rains"
+          ],
+          "answer": 1,
+          "source": "Roof Safety Manual, p. 14"
+        }
+      },
+      "example_usage": {
+        "questions_month": 133,
+        "answered_with_source": 118,
+        "gaps_closed": 5,
+        "certified": 6
+      }
+    }
+  ]
+}

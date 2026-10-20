@@ -1,6 +1,14 @@
 // Academy admin (M1 + M2): knowledge base, learners, learning paths.
 // Reuses the .authx-* field/button styles; layout lives in .acad-* (styles.css).
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LearnerView } from "./LearnerView";
+import { ProgressDashboard } from "./ProgressDashboard";
+import { Markdown, Notice, readError } from "./academyShared";
+import { DEMO, demoFetch } from "../demoBackend";
+import { AnimatePresence, motion } from "framer-motion";
+import { BarChart3, Eye, Library, Route, Users } from "lucide-react";
+import { EASE_OUT } from "./academyMotion";
+import "./academy.css";
 
 interface Props {
   apiUrl: string;
@@ -13,36 +21,33 @@ type Doc = {
 };
 type Learner = {
   uid: string; email: string; role: string | null; department: string | null;
-  seniority: number; clearance: number; pending: boolean;
+  seniority: number; clearance: number; pending: boolean; name: string | null;
 };
 type Item = {
-  id: string; module_id: string; type: "mcq" | "true_false" | string; stem: string;
-  options: string[] | null; answer: number | boolean; explanation: string | null;
-  source_doc_ids: string[]; status: string;
+  id: string; module_id: string; type: ItemType; stem: string;
+  options: string[] | null; answer: number | boolean | null; explanation: string | null;
+  source_doc_ids: string[]; status: string; rubric?: string | null;
 };
+type ItemType = "mcq" | "true_false" | "short_answer" | "scenario";
+const ITEM_LABELS: Record<ItemType, string> = {
+  mcq: "Multiple choice", true_false: "True / false", short_answer: "Short answer", scenario: "Scenario",
+};
+const isFreeText = (t: ItemType) => t === "short_answer" || t === "scenario";
 type Module = {
   id: string; position: number; title: string; lesson_md: string;
   source_doc_ids: string[]; status: string; items: Item[];
 };
 type PathT = {
   id: string; title: string; status: string; error: string | null; updated_at: string;
-  rules: { department?: string | null; role?: string | null; clearance?: number; module_count?: number };
+  rules: { department?: string | null; role?: string | null; clearance?: number; module_count?: number; due_days?: number | null };
+  pass_mark: number;
   module_count: number; modules?: Module[] | null;
 };
 
 const LEVELS = ["Public", "Internal", "Restricted"];
-type Section = "kb" | "learners" | "paths";
+type Section = "progress" | "kb" | "learners" | "paths" | "learn";
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
-async function readError(r: Response): Promise<string> {
-  try {
-    const body = await r.json();
-    if (typeof body.detail === "string") return body.detail;
-    if (Array.isArray(body.detail)) return body.detail.map((d: { msg?: string }) => d.msg).join("; ");
-  } catch { /* not JSON */ }
-  return `Request failed (${r.status}).`;
-}
-
 function when(iso: string): string {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -53,43 +58,6 @@ function StatusBadge({ status }: { status: string }) {
     generating: "Generating", failed: "Failed", draft: "Draft", published: "Published", stale: "Needs review",
   };
   return <span className={`acad-badge is-${status}`}>{label[status] ?? status}</span>;
-}
-
-function Notice({ kind, children, onClose }: { kind: "ok" | "error"; children: ReactNode; onClose?: () => void }) {
-  return (
-    <div className={`acad-notice is-${kind}`} role={kind === "error" ? "alert" : "status"}>
-      <span>{children}</span>
-      {onClose && <button type="button" className="authx-link authx-link-sm" onClick={onClose}>Dismiss</button>}
-    </div>
-  );
-}
-
-// Minimal, safe Markdown → React (paragraphs, "- " bullets, **bold**). No HTML injection.
-function Markdown({ text }: { text: string }) {
-  const inline = (s: string) => s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : part);
-  const blocks = text.trim().split(/\n{2,}/);
-  return (
-    <div className="acad-md">
-      {blocks.map((b, i) => {
-        const lines = b.split("\n");
-        const bullets = lines.filter((l) => /^\s*[-*]\s+/.test(l));
-        if (bullets.length && bullets.length === lines.filter((l) => l.trim()).length) {
-          return <ul key={i}>{bullets.map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*]\s+/, ""))}</li>)}</ul>;
-        }
-        const [head, ...rest] = lines;
-        if (rest.length && rest.every((l) => /^\s*[-*]\s+/.test(l))) {
-          return (
-            <div key={i}>
-              <p>{inline(head)}</p>
-              <ul>{rest.map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*]\s+/, ""))}</li>)}</ul>
-            </div>
-          );
-        }
-        return <p key={i}>{inline(b.replace(/^#+\s*/, ""))}</p>;
-      })}
-    </div>
-  );
 }
 
 function ConfirmButton({ label, confirmLabel, onConfirm, disabled }: {
@@ -224,6 +192,7 @@ function KnowledgeBase({ api, docs, reload }: {
 function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<Response> }) {
   const [list, setList] = useState<Learner[]>([]);
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [dept, setDept] = useState("");
   const [role, setRole] = useState("");
   const [level, setLevel] = useState("1");
@@ -245,12 +214,19 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
     const uid = existing?.uid ?? `email:${email.trim().toLowerCase()}`;
     const r = await api(`/api/academy/learners/${encodeURIComponent(uid)}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim(), department: dept || null, role: role || null, clearance: Number(level) }),
+      body: JSON.stringify({ email: email.trim(), name: name.trim() || null, department: dept || null,
+                             role: role || null, clearance: Number(level) }),
     });
     setBusy(false);
     if (!r.ok) { setNotice({ kind: "error", text: await readError(r) }); return; }
     setNotice({ kind: "ok", text: `${email.trim()} saved. They're matched when they sign in with that email.` });
-    setEmail(""); setDept(""); setRole(""); load();
+    setEmail(""); setName(""); setDept(""); setRole(""); setLevel("1"); load();
+  }
+
+  function edit(l: Learner) {
+    setEmail(l.email); setName(l.name ?? ""); setDept(l.department ?? ""); setRole(l.role ?? "");
+    setLevel(String(l.clearance)); setNotice(null);
+    document.getElementById("ln-email")?.focus();
   }
 
   async function importCsv() {
@@ -283,6 +259,10 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
             <label className="authx-label" htmlFor="ln-email">Work email</label>
             <input id="ln-email" type="email" className="authx-input" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
+          <div className="authx-field">
+            <label className="authx-label" htmlFor="ln-name">Full name <span className="authx-optional">(printed on certificates)</span></label>
+            <input id="ln-name" className="authx-input" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+          </div>
           <div className="acad-grid">
             <div className="authx-field">
               <label className="authx-label" htmlFor="ln-dept">Department</label>
@@ -306,11 +286,11 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
 
         <div className="acad-card">
           <h3 className="acad-h3">Import from CSV</h3>
-          <p className="acad-help">Header row required. Only <code>email</code> is mandatory; clearance is public, internal or restricted.</p>
+          <p className="acad-help">Header row required. Only <code>email</code> is mandatory; <code>name</code> is printed on certificates; clearance is public, internal or restricted.</p>
           <div className="authx-field">
             <label className="authx-label" htmlFor="ln-csv">CSV</label>
             <textarea id="ln-csv" className="authx-input acad-textarea" rows={6} value={csv} onChange={(e) => setCsv(e.target.value)}
-                      placeholder={"email,department,role,clearance\npriya@company.com,sales,sdr,internal"} />
+                      placeholder={"email,name,department,role,clearance\npriya@company.com,Priya Sharma,sales,sdr,internal"} />
           </div>
           <div className="acad-actions">
             <label className="authx-btn authx-btn-secondary acad-file-btn">
@@ -339,11 +319,18 @@ function Learners({ api }: { api: (path: string, init?: RequestInit) => Promise<
               <tbody>
                 {list.map((l) => (
                   <tr key={l.uid}>
-                    <td><span className="acad-strong">{l.email}</span>{l.pending && <span className="acad-pill">Not signed in yet</span>}</td>
+                    <td>
+                      <span className="acad-strong">{l.name || l.email}</span>
+                      {l.pending && <span className="acad-pill">Not signed in yet</span>}
+                      {l.name && <span className="acad-muted acad-small acad-block">{l.email}</span>}
+                    </td>
                     <td className="acad-muted">{l.department ?? "Any"}</td>
                     <td className="acad-muted">{l.role ?? "Any"}</td>
                     <td><span className={`acad-level is-${l.clearance}`}>{LEVELS[l.clearance]}</span></td>
-                    <td className="acad-row-actions"><ConfirmButton label="Remove" confirmLabel="Confirm remove" onConfirm={() => remove(l)} /></td>
+                    <td className="acad-row-actions">
+                      <button type="button" className="authx-link authx-link-sm" onClick={() => edit(l)}>Edit</button>{" "}
+                      <ConfirmButton label="Remove" confirmLabel="Confirm remove" onConfirm={() => remove(l)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -362,16 +349,19 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [stem, setStem] = useState(item.stem);
-  const [type, setType] = useState<"mcq" | "true_false">(item.type === "true_false" ? "true_false" : "mcq");
+  const [type, setType] = useState<ItemType>(item.type);
   const [options, setOptions] = useState<string[]>(item.options ?? ["", "", "", ""]);
-  const [answer, setAnswer] = useState<number | boolean>(item.answer);
+  const [answer, setAnswer] = useState<number | boolean>(item.answer ?? 0);
   const [explanation, setExplanation] = useState(item.explanation ?? "");
+  const [rubric, setRubric] = useState(item.rubric ?? "");
   const [error, setError] = useState("");
 
   async function save() {
     setError("");
-    const body = { stem, type, options: type === "mcq" ? options : null,
-                   answer: type === "mcq" ? Number(answer) || 0 : Boolean(answer), explanation };
+    const body = isFreeText(type)
+      ? { stem, type, rubric, explanation }
+      : { stem, type, options: type === "mcq" ? options : null,
+          answer: type === "mcq" ? Number(answer) || 0 : Boolean(answer), explanation };
     const r = await api(`/api/academy/items/${item.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) { setError(await readError(r)); return; }
     onSaved(await r.json()); setEditing(false);
@@ -386,7 +376,7 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
     return (
       <li className={`acad-item${item.status === "stale" ? " is-stale" : ""}`}>
         <div className="acad-item-head">
-          <span className="acad-item-type">{item.type === "mcq" ? "Multiple choice" : "True / false"}</span>
+          <span className="acad-item-type">{ITEM_LABELS[item.type] ?? item.type}</span>
           {item.status === "stale" && <StatusBadge status="stale" />}
           <span className="acad-spacer" />
           <button type="button" className="authx-link authx-link-sm" onClick={() => setEditing(true)}>Edit</button>
@@ -397,7 +387,9 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
           <ol className="acad-options">
             {item.options.map((o, i) => <li key={i} className={i === item.answer ? "is-correct" : ""}>{o}{i === item.answer && <span className="sr-only"> (correct)</span>}</li>)}
           </ol>
-        ) : <p className="acad-muted">Answer: <span className="acad-strong">{item.answer ? "True" : "False"}</span></p>}
+        ) : isFreeText(item.type)
+          ? <p className="acad-muted">Graded against: <span className="acad-strong">{item.rubric || "(no rubric yet)"}</span></p>
+          : <p className="acad-muted">Answer: <span className="acad-strong">{item.answer ? "True" : "False"}</span></p>}
         {item.explanation && <p className="acad-muted acad-small">{item.explanation}</p>}
         {error && <p className="authx-error">{error}</p>}
       </li>
@@ -414,12 +406,17 @@ function ItemEditor({ item, api, onSaved, onDeleted }: {
         <div className="authx-field">
           <label className="authx-label" htmlFor={`type-${item.id}`}>Type</label>
           <select id={`type-${item.id}`} className="authx-input authx-select" value={type}
-                  onChange={(e) => { const t = e.target.value as "mcq" | "true_false"; setType(t); setAnswer(t === "mcq" ? 0 : true); }}>
-            <option value="mcq">Multiple choice</option><option value="true_false">True / false</option>
+                  onChange={(e) => { const t = e.target.value as ItemType; setType(t); setAnswer(t === "mcq" ? 0 : true); }}>
+            {(Object.keys(ITEM_LABELS) as ItemType[]).map((t) => <option key={t} value={t}>{ITEM_LABELS[t]}</option>)}
           </select>
         </div>
       </div>
-      {type === "mcq" ? (
+      {isFreeText(type) ? (
+        <div className="authx-field">
+          <label className="authx-label" htmlFor={`rubric-${item.id}`}>Rubric <span className="authx-optional">(the points a correct answer must cover)</span></label>
+          <textarea id={`rubric-${item.id}`} className="authx-input acad-textarea" rows={3} value={rubric} onChange={(e) => setRubric(e.target.value)} />
+        </div>
+      ) : type === "mcq" ? (
         <fieldset className="authx-fieldset">
           <legend className="authx-label">Options (select the correct one)</legend>
           {options.map((o, i) => (
@@ -511,7 +508,53 @@ function ModuleEditor({ mod, docTitle, api, onChange }: {
   );
 }
 
-function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promise<Response>; docs: Doc[] }) {
+function PathSettings({ api, path, onSaved }: {
+  api: (path: string, init?: RequestInit) => Promise<Response>; path: PathT; onSaved: (p: PathT) => void;
+}) {
+  const [passMark, setPassMark] = useState(String(Math.round(path.pass_mark * 100)));
+  const [dueDays, setDueDays] = useState(path.rules.due_days ? String(path.rules.due_days) : "");
+  const [msg, setMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const dirty = Number(passMark) !== Math.round(path.pass_mark * 100) || dueDays !== (path.rules.due_days ? String(path.rules.due_days) : "");
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    const r = await api(`/api/academy/paths/${path.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pass_mark: Number(passMark) / 100, due_days: dueDays ? Number(dueDays) : null }),
+    });
+    if (!r.ok) { setMsg({ kind: "error", text: await readError(r) }); return; }
+    onSaved(await r.json());
+    setMsg({ kind: "ok", text: "Saved. Open deadlines moved to match." });
+  }
+
+  return (
+    <form className="acad-settings" onSubmit={save}>
+      <div className="authx-field">
+        <label className="authx-label" htmlFor="ps-pass">Pass mark (%)</label>
+        <input id="ps-pass" type="number" min={50} max={100} step={5} className="authx-input" value={passMark}
+               onChange={(e) => setPassMark(e.target.value)} />
+      </div>
+      <div className="authx-field">
+        <label className="authx-label" htmlFor="ps-due">Finish within <span className="authx-optional">(days, optional)</span></label>
+        <input id="ps-due" type="number" min={1} max={365} className="authx-input" value={dueDays} placeholder="No deadline"
+               onChange={(e) => setDueDays(e.target.value)} aria-describedby="ps-due-hint" />
+      </div>
+      <div className="acad-actions acad-settings-save">
+        <button type="submit" className="authx-btn authx-btn-secondary acad-btn-auto" disabled={!dirty}>Save settings</button>
+      </div>
+      <p className="authx-hint acad-span-all" id="ps-due-hint">
+        Each lesson's test must reach the pass mark. Deadlines count from the day each learner first opens Academy.
+      </p>
+      {msg && <div className="acad-span-all"><Notice kind={msg.kind} onClose={() => setMsg(null)}>{msg.text}</Notice></div>}
+    </form>
+  );
+}
+
+function Paths({ api, docs, focusId, onFocused }: {
+  api: (path: string, init?: RequestInit) => Promise<Response>; docs: Doc[];
+  focusId?: string | null; onFocused?: () => void;
+}) {
   const [paths, setPaths] = useState<PathT[]>([]);
   const [open, setOpen] = useState<PathT | null>(null);
   const [title, setTitle] = useState("");
@@ -538,6 +581,9 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
     const r = await api(`/api/academy/paths/${id}`);
     if (r.ok) setOpen(await r.json());
   }, [api]);
+  useEffect(() => {
+    if (focusId) { openPath(focusId); onFocused?.(); }
+  }, [focusId, openPath, onFocused]);
 
   async function create(e: FormEvent) {
     e.preventDefault();
@@ -578,7 +624,8 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
   const audience = (p: PathT) => [p.rules.department, p.rules.role].filter(Boolean).join(" · ") || "Everyone";
 
   if (open) {
-    const staleCount = (open.modules ?? []).filter((m) => m.status === "stale").length;
+    const staleCount = (open.modules ?? []).filter((m) => m.status === "stale").length
+      + (open.modules ?? []).flatMap((m) => m.items).filter((i) => i.status === "stale").length;
     return (
       <div className="acad-section">
         <button type="button" className="authx-link" onClick={() => { setOpen(null); load(); }}>← All paths</button>
@@ -597,9 +644,10 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
             <button type="button" className="authx-btn authx-btn-primary acad-btn-auto"
                     disabled={open.status === "published" || staleCount > 0 || !(open.modules?.length)}
                     onClick={() => publish(open)}>
-              {open.status === "published" ? "Published" : staleCount ? `Review ${staleCount} lesson${staleCount > 1 ? "s" : ""} first` : "Publish"}
+              {open.status === "published" ? "Published" : staleCount ? `Review ${staleCount} stale item${staleCount > 1 ? "s" : ""} first` : "Publish"}
             </button>
           </div>
+          <PathSettings api={api} path={open} onSaved={(p) => setOpen({ ...open, ...p, modules: open.modules })} />
         </div>
         {(open.modules ?? []).map((m) => (
           <ModuleEditor key={m.id} mod={m} docTitle={docTitle} api={api} onChange={() => openPath(open.id)} />
@@ -674,10 +722,18 @@ function Paths({ api, docs }: { api: (path: string, init?: RequestInit) => Promi
   );
 }
 
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function AcademyPanel({ apiUrl, authHeaders }: Props) {
-  const [section, setSection] = useState<Section>("kb");
+  const [section, setSection] = useState<Section>("progress");
+  const [focusPath, setFocusPath] = useState<string | null>(null);
+  const clearFocus = useCallback(() => setFocusPath(null), []);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [docs, setDocs] = useState<Doc[]>([]);
 
   // authHeaders is a fresh function on every App render; read it through a ref so
@@ -685,7 +741,7 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
   const headersRef = useRef(authHeaders);
   headersRef.current = authHeaders;
   const api = useCallback((path: string, init: RequestInit = {}) =>
-    fetch(`${apiUrl}${path}`, { ...init, headers: { ...headersRef.current(), ...(init.headers ?? {}) } }),
+    (DEMO ? demoFetch : fetch)(`${apiUrl}${path}`, { ...init, headers: { ...headersRef.current(), ...(init.headers ?? {}) } }),
   [apiUrl]);
 
   const loadDocs = useCallback(async () => {
@@ -699,15 +755,16 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
         const r = await api("/api/academy/me");
         const me = r.ok ? await r.json() : null;
         setEnabled(!!me?.enabled);
-        if (me?.enabled) loadDocs();
+        setIsAdmin(!!me?.is_admin);
+        if (me?.enabled && me?.is_admin) loadDocs();
       } catch { setEnabled(false); }
     })();
   }, [api, loadDocs]);
 
-  if (enabled === null) return <div className="acad"><p className="acad-muted">Loading Academy…</p></div>;
+  if (enabled === null) return <div className="acad acx"><div className="acx-skel" aria-label="Loading Academy"><i /><i /><i /></div></div>;
   if (!enabled) {
     return (
-      <div className="acad">
+      <div className="acad acx">
         <div className="acad-card acad-off">
           <h2 className="acad-h2">Academy isn't switched on for this workspace</h2>
           <p className="acad-muted">Academy turns your documents into onboarding paths with tests. Ask your RAGaaS contact to enable it.</p>
@@ -716,25 +773,73 @@ export function AcademyPanel({ apiUrl, authHeaders }: Props) {
     );
   }
 
-  const tabs: { id: Section; label: string }[] = [
-    { id: "kb", label: "Knowledge base" }, { id: "learners", label: "Learners" }, { id: "paths", label: "Learning paths" },
+  if (!isAdmin) {
+    return (
+      <div className="acad acx">
+        <header className="acx-hero">
+          <div className="acx-hero-text">
+            <motion.p className="acx-eyebrow" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>Academy</motion.p>
+            <motion.h2 className="acad-h2 acx-title" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.06, ease: EASE_OUT, duration: 0.5 } }}>
+              {greeting()}. Here's your onboarding.
+            </motion.h2>
+          </div>
+        </header>
+        <LearnerView api={api} />
+      </div>
+    );
+  }
+
+  const tabs: { id: Section; label: string; icon: typeof Users; blurb: string }[] = [
+    { id: "progress", label: "Progress", icon: BarChart3, blurb: "Who's ready, who's stuck, and what to fix in the content." },
+    { id: "kb", label: "Knowledge base", icon: Library, blurb: "The documents lessons and questions are written from, and who may see them." },
+    { id: "learners", label: "Learners", icon: Users, blurb: "Everyone who takes training, with the team and access that decide their paths." },
+    { id: "paths", label: "Learning paths", icon: Route, blurb: "Generate a path from your documents, review every lesson, then publish." },
+    { id: "learn", label: "Learner preview", icon: Eye, blurb: "Exactly what a learner sees. Nothing you submit here is recorded." },
   ];
+  const active = tabs.find((t) => t.id === section)!;
   return (
-    <div className="acad">
-      <header className="acad-header">
-        <h2 className="acad-h2">Academy</h2>
-        <div className="acad-tabs" role="tablist" aria-label="Academy sections">
-          {tabs.map((t) => (
-            <button key={t.id} type="button" role="tab" aria-selected={section === t.id}
-                    className={`acad-tab${section === t.id ? " is-active" : ""}`} onClick={() => setSection(t.id)}>
-              {t.label}
-            </button>
-          ))}
+    <div className="acad acx">
+      <header className="acx-hero">
+        <div className="acx-hero-text">
+          <motion.p className="acx-eyebrow" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>Academy</motion.p>
+          <motion.h2 className="acad-h2 acx-title" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0, transition: { delay: 0.06, ease: EASE_OUT, duration: 0.5 } }}>
+            Onboarding, built from the documents you already have.
+          </motion.h2>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.p key={section} className="acx-sub"
+              initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0, transition: { duration: 0.25 } }} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
+              {active.blurb}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+        <div className="acx-tabs" role="tablist" aria-label="Academy sections">
+          {tabs.map((t) => {
+            const Icon = t.icon;
+            const on = section === t.id;
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={on}
+                      className={`acx-tab${on ? " is-active" : ""}`} onClick={() => setSection(t.id)}>
+                {on && <motion.span layoutId="acx-tab-pill" className="acx-tab-pill" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+                <Icon size={15} aria-hidden="true" /><span>{t.label}</span>
+              </button>
+            );
+          })}
         </div>
       </header>
-      {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
-      {section === "learners" && <Learners api={api} />}
-      {section === "paths" && <Paths api={api} docs={docs} />}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={section} className="acx-pane"
+          initial={{ opacity: 0, transform: "translateY(12px)" }}
+          animate={{ opacity: 1, transform: "translateY(0px)", transition: { duration: 0.32, ease: EASE_OUT } }}
+          exit={{ opacity: 0, transform: "translateY(-6px)", transition: { duration: 0.14 } }}>
+          {section === "progress" && (
+            <ProgressDashboard api={api} onOpenPath={(id) => { setFocusPath(id); setSection("paths"); }} />
+          )}
+          {section === "kb" && <KnowledgeBase api={api} docs={docs} reload={loadDocs} />}
+          {section === "learners" && <Learners api={api} />}
+          {section === "paths" && <Paths api={api} docs={docs} focusId={focusPath} onFocused={clearFocus} />}
+          {section === "learn" && <LearnerView api={api} />}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

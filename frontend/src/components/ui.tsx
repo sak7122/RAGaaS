@@ -146,7 +146,7 @@ export function StreamingText({
   text: string;
   active: boolean;
 }) {
-  const words = text.split(" ");
+  const words = String(text ?? "").split(" ");
   const [count, setCount] = useState(active ? 0 : words.length);
 
   useEffect(() => {

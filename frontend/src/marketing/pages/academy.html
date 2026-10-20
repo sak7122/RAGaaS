@@ -1,0 +1,91 @@
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="/" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="/ask">Ask</a>
+<a class="navlink" href="/gaps">Gaps</a>
+<a class="navlink" href="/academy" aria-current="page">Academy</a>
+<a class="navlink" href="/access">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="/signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="/signup">Start free</a>
+</div>
+</header>
+
+<main>
+<section class="hero parch">
+<div class="wide hero-grid">
+<div style="display:flex;flex-direction:column;gap:20px">
+<p class="eyebrow" data-reveal>Academy</p>
+<h1 class="h1" data-split>Onboarding, written by your own documents.</h1>
+<p class="lede" data-reveal style="transition-delay:.3s">Pick a role. Its documents become a short path: lessons with sources, a test after each, review of what was missed, and a manager's sign-off at the end.</p>
+<div class="row-btns" data-reveal style="transition-delay:.4s"><a class="pill pill-blue" href="#quiz">Take a lesson test <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="#review">How review works</a></div>
+</div>
+<div class="card shadow path" data-reveal="scale" id="path" style="transition-delay:.15s">
+<span class="float-chip" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/></svg>Built from 4 documents</span>
+<div class="path-top">
+<svg width="96" height="96" viewBox="0 0 104 104" role="img" aria-label="Lessons passed" id="ring-svg"><circle cx="52" cy="52" r="44" fill="none" stroke="#e8e8ed" stroke-width="8"/><circle class="ring-fill" id="ring" cx="52" cy="52" r="44" fill="none" stroke="#0066cc" stroke-width="8" stroke-linecap="round" stroke-dasharray="276.46" stroke-dashoffset="276.46" transform="rotate(-90 52 52)"/><text id="ring-t" x="52" y="58" text-anchor="middle" font-size="20" font-weight="600" fill="#1d1d1f" font-family="-apple-system,BlinkMacSystemFont,sans-serif">0/4</text></svg>
+<div><p class="h3" style="font-size:22px">Sales onboarding</p><p class="body" style="font-size:15px">Due in 14 days · manager: [NAME]</p></div>
+</div>
+<div id="lessons"></div>
+</div>
+</div>
+</section>
+
+<section id="quiz" class="sec" style="background:#fff">
+<div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:56px;align-items:start">
+<div style="display:flex;flex-direction:column;gap:16px;position:sticky;top:100px">
+<p class="eyebrow" data-reveal>Tests</p>
+<h2 class="h2" data-split>Every question cites its page.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">Tests are written from the same passages as the lessons. Right or wrong, the feedback shows where the answer lives.</p>
+</div>
+<div class="card shadow quiz" data-reveal="right" id="quizbox" aria-live="polite"></div>
+</div>
+</section>
+
+<section id="review" class="sec parch">
+<div class="wide" style="display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:16px;max-width:680px">
+<p class="eyebrow" data-reveal>Spaced review</p>
+<h2 class="h2" data-split>Missed it? It comes back.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">A question answered wrong returns a few days later, and again a week after that, until it sticks. Two weeks, end to end.</p>
+</div>
+<div class="card" data-once style="padding:36px 28px 28px">
+<div class="days" id="days"><span class="dline" aria-hidden="true"></span></div>
+<div style="display:flex;flex-wrap:wrap;gap:18px;margin-top:28px;font-size:13px;color:var(--muted)">
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--ink)"></i>Lesson</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--orange)"></i>Review of a missed question</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--blue)"></i>Manager sign-off</span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec dark">
+<div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:56px;align-items:center">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p class="eyebrow" data-reveal>Sign-off</p>
+<h2 class="h2" data-split>Managers sign off. Hires get a certificate.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">When every lesson is passed, the manager sees the scores and signs. The certificate lists the documents and their versions.</p>
+</div>
+<div class="card sign" data-reveal="scale" style="color:var(--ink)" id="signbox">
+<p class="body" style="font-size:13px">Waiting for your sign-off</p>
+<p class="h3">Priya passed Sales onboarding</p>
+<p class="body">4 of 4 lessons · 1 question reviewed twice · finished 3 days early</p>
+<button type="button" class="signbtn" id="signbtn"><span class="hold" aria-hidden="true"></span><span id="sign-t">Hold to sign off</span></button>
+<div id="certslot"></div>
+</div>
+</div>
+</section>
+
+<section id="start" class="sec cta" style="background:#fff">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Your handbook is already a course.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Pick a role and see the path it makes from the documents you have.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="/ask#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="/access">Next: Access</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span style="flex:1"></span><a href="/access">Privacy</a><a href="#start">Contact</a></div></footer>

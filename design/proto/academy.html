@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Academy · RAGaaS</title>
+<link rel="stylesheet" href="assets/base.css">
+<style>
+.hero{padding:104px 0 120px;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:64px;align-items:center}
+/* path card: plays once on load */
+.path{position:relative;padding:28px;display:flex;flex-direction:column;gap:6px}
+.path-top{display:flex;align-items:center;gap:20px;padding-bottom:16px;border-bottom:1px solid var(--hair);margin-bottom:6px}
+.ring-fill{transition:stroke-dashoffset 1s var(--ease)}
+.lesson{display:flex;align-items:center;gap:14px;padding:14px 0;border-bottom:1px solid var(--hair);font-size:17px}
+.lesson:last-child{border-bottom:0}
+.lesson .meta{font-size:14px;color:var(--muted)}
+.lesson.current .tick{border-color:var(--blue);box-shadow:0 0 0 4px rgba(0,102,204,.12)}
+.lesson.locked{color:var(--muted)}
+.tick.done{transform:none}
+.tick.just{animation:tickIn .45s var(--ease)}
+@keyframes tickIn{from{transform:scale(.7)}to{transform:none}}
+.float-chip{position:absolute;right:-18px;top:-16px;display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 14px;border-radius:9999px;background:var(--ink);color:#fff;font-size:13px;box-shadow:0 10px 30px -10px rgba(0,0,0,.5);animation:bob 4s var(--ease-io) infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+/* quiz */
+.quiz{padding:32px;display:flex;flex-direction:column;gap:14px;min-height:420px}
+.opt{display:flex;align-items:center;gap:12px;width:100%;min-height:54px;padding:12px 16px;border-radius:14px;border:1px solid var(--hair);background:#fff;color:var(--ink);font:400 17px/1.35 var(--font);text-align:left;cursor:pointer;transition:transform .16s var(--ease),border-color .2s ease,background-color .2s ease}
+@media (hover:hover) and (pointer:fine){.opt:hover:enabled{border-color:rgba(0,0,0,.25)}}
+.opt:active:enabled{transform:scale(.98)}
+.opt:disabled{cursor:default}
+.opt.right{border-color:#167a3e;background:#eaf7ef}
+.opt.wrong{border-color:#c0262d;background:#fdeeee;animation:shake .35s var(--ease-io)}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.feedback{display:flex;flex-direction:column;gap:12px;animation:rise .35s var(--ease) both}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.qbar{display:flex;gap:6px}
+.qbar i{flex:1;height:4px;border-radius:2px;background:#e8e8ed;overflow:hidden;position:relative}
+.qbar i::after{content:"";position:absolute;inset:0;background:var(--blue);transform:scaleX(0);transform-origin:0 50%;transition:transform .5s var(--ease)}
+.qbar i.on::after{transform:none}
+.swap{animation:swapIn .4s var(--ease) both}
+@keyframes swapIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.cert{position:relative;overflow:hidden;text-align:center;padding:36px 28px;border-radius:20px;border:1.5px solid var(--ink);background:#fff;animation:certIn .6s var(--ease) both}
+@keyframes certIn{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:none}}
+.cert::before{content:"";position:absolute;inset:8px;border:1px solid var(--hair);border-radius:14px;pointer-events:none}
+.cert::after{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.9) 50%,transparent 60%);transform:translateX(-100%);animation:sheen 1.4s var(--ease) .5s both;pointer-events:none}
+@keyframes sheen{to{transform:translateX(100%)}}
+/* spaced review timeline */
+.days{position:relative;display:grid;grid-template-columns:repeat(14,minmax(0,1fr));gap:6px;padding-top:28px}
+.days::before{content:"";position:absolute;left:0;right:0;top:34px;height:2px;background:#e8e8ed}
+.dline{position:absolute;left:0;top:34px;height:2px;width:100%;background:var(--blue);transform-origin:0 50%;transform:scaleX(0);transition:transform 1.8s var(--ease-io) .2s}
+.is-in .dline{transform:scaleX(1)}
+.day{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.dot{width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid #d2d2d7;z-index:1;opacity:0;transform:scale(.6);transition:opacity .3s ease,transform .4s var(--ease)}
+.is-in .dot{opacity:1;transform:none;transition-delay:calc(.2s + var(--i) * 110ms)}
+.dot.lesson-d{background:var(--ink);border-color:var(--ink)}
+.dot.review{background:var(--orange);border-color:var(--orange)}
+.dot.signed{background:var(--blue);border-color:var(--blue)}
+.dlabel{position:absolute;top:-26px;white-space:nowrap;font-size:12px;font-weight:600;color:var(--ink);opacity:0;transition:opacity .4s ease}
+.is-in .dlabel{opacity:1;transition-delay:calc(.5s + var(--i) * 110ms)}
+/* sign-off */
+.sign{padding:32px;display:flex;flex-direction:column;gap:16px}
+.signbtn{position:relative;overflow:hidden;align-self:flex-start;min-height:48px;padding:0 24px;border-radius:9999px;border:0;background:var(--ink);color:#fff;font:500 16px/1 var(--font);cursor:pointer;transition:transform .16s var(--ease)}
+.signbtn:active{transform:scale(.97)}
+.signbtn .hold{position:absolute;inset:0;background:var(--blue);clip-path:inset(0 100% 0 0);transition:clip-path .2s var(--ease)}
+.signbtn.pressing .hold{clip-path:inset(0 0 0 0);transition:clip-path 1.2s linear}
+.signbtn span{position:relative}
+.signbtn.signed{background:var(--green);color:#000}
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:minmax(0,1fr);gap:40px}
+  .float-chip{right:8px}
+  .days{grid-template-columns:repeat(7,minmax(0,1fr));row-gap:34px}
+  .days::before,.dline{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  .float-chip,.opt.wrong,.feedback,.swap,.cert,.cert::after,.tick.just{animation:none!important}
+  .cert::after{display:none}
+  .dline,.dot,.dlabel,.ring-fill{transition:none!important}
+  .signbtn.pressing .hold{transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="progress" aria-hidden="true"></div>
+<header class="nav">
+<div class="wide nav-in">
+<a href="index.html" class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h4"/></svg>RAGaaS</a>
+<nav class="navlinks" aria-label="Product">
+<a class="navlink" href="ask.html">Ask</a>
+<a class="navlink" href="gaps.html">Gaps</a>
+<a class="navlink" href="academy.html" aria-current="page">Academy</a>
+<a class="navlink" href="access.html">Access</a>
+</nav>
+<span class="spacer"></span>
+<a class="util" href="#signin">Sign in</a>
+<a class="pill pill-blue pill-sm" href="#start">Start free</a>
+</div>
+</header>
+
+<main>
+<section class="hero parch">
+<div class="wide hero-grid">
+<div style="display:flex;flex-direction:column;gap:20px">
+<p class="eyebrow" data-reveal>Academy</p>
+<h1 class="h1" data-split>Onboarding, written by your own documents.</h1>
+<p class="lede" data-reveal style="transition-delay:.3s">Pick a role. Its documents become a short path: lessons with sources, a test after each, review of what was missed, and a manager's sign-off at the end.</p>
+<div class="row-btns" data-reveal style="transition-delay:.4s"><a class="pill pill-blue" href="#quiz">Take a lesson test <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="#review">How review works</a></div>
+</div>
+<div class="card shadow path" data-reveal="scale" id="path" style="transition-delay:.15s">
+<span class="float-chip" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/></svg>Built from 4 documents</span>
+<div class="path-top">
+<svg width="96" height="96" viewBox="0 0 104 104" role="img" aria-label="Lessons passed" id="ring-svg"><circle cx="52" cy="52" r="44" fill="none" stroke="#e8e8ed" stroke-width="8"/><circle class="ring-fill" id="ring" cx="52" cy="52" r="44" fill="none" stroke="#0066cc" stroke-width="8" stroke-linecap="round" stroke-dasharray="276.46" stroke-dashoffset="276.46" transform="rotate(-90 52 52)"/><text id="ring-t" x="52" y="58" text-anchor="middle" font-size="20" font-weight="600" fill="#1d1d1f" font-family="-apple-system,BlinkMacSystemFont,sans-serif">0/4</text></svg>
+<div><p class="h3" style="font-size:22px">Sales onboarding</p><p class="body" style="font-size:15px">Due in 14 days · manager: [NAME]</p></div>
+</div>
+<div id="lessons"></div>
+</div>
+</div>
+</section>
+
+<section id="quiz" class="sec" style="background:#fff">
+<div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:56px;align-items:start">
+<div style="display:flex;flex-direction:column;gap:16px;position:sticky;top:100px">
+<p class="eyebrow" data-reveal>Tests</p>
+<h2 class="h2" data-split>Every question cites its page.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">Tests are written from the same passages as the lessons. Right or wrong, the feedback shows where the answer lives.</p>
+</div>
+<div class="card shadow quiz" data-reveal="right" id="quizbox" aria-live="polite"></div>
+</div>
+</section>
+
+<section id="review" class="sec parch">
+<div class="wide" style="display:flex;flex-direction:column;gap:44px">
+<div style="display:flex;flex-direction:column;gap:16px;max-width:680px">
+<p class="eyebrow" data-reveal>Spaced review</p>
+<h2 class="h2" data-split>Missed it? It comes back.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">A question answered wrong returns a few days later, and again a week after that, until it sticks. Two weeks, end to end.</p>
+</div>
+<div class="card" data-once style="padding:36px 28px 28px">
+<div class="days" id="days"><span class="dline" aria-hidden="true"></span></div>
+<div style="display:flex;flex-wrap:wrap;gap:18px;margin-top:28px;font-size:13px;color:var(--muted)">
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--ink)"></i>Lesson</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--orange)"></i>Review of a missed question</span>
+<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:var(--blue)"></i>Manager sign-off</span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="sec dark">
+<div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:56px;align-items:center">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p class="eyebrow" data-reveal>Sign-off</p>
+<h2 class="h2" data-split>Managers sign off. Hires get a certificate.</h2>
+<p class="body" data-reveal style="transition-delay:.2s">When every lesson is passed, the manager sees the scores and signs. The certificate lists the documents and their versions.</p>
+</div>
+<div class="card sign" data-reveal="scale" style="color:var(--ink)" id="signbox">
+<p class="body" style="font-size:13px">Waiting for your sign-off</p>
+<p class="h3">Priya passed Sales onboarding</p>
+<p class="body">4 of 4 lessons · 1 question reviewed twice · finished 3 days early</p>
+<button type="button" class="signbtn" id="signbtn"><span class="hold" aria-hidden="true"></span><span id="sign-t">Hold to sign off</span></button>
+<div id="certslot"></div>
+</div>
+</div>
+</section>
+
+<section id="start" class="sec cta" style="background:#fff">
+<div class="wrap">
+<h2 class="h2" data-split style="max-width:16ch">Your handbook is already a course.</h2>
+<p class="lede" data-reveal style="max-width:40ch;transition-delay:.2s">Pick a role and see the path it makes from the documents you have.</p>
+<div class="row-btns" data-reveal style="justify-content:center;transition-delay:.3s"><a class="pill pill-blue" href="ask.html#try">Open the demo workspace <span class="arrow" aria-hidden="true">→</span></a><a class="pill pill-ghost" href="access.html">Next: Access</a></div>
+</div>
+</section>
+</main>
+<footer class="foot"><div class="wide foot-in"><span>RAGaaS · Answers from your own documents.</span><span style="flex:1"></span><a href="access.html">Privacy</a><a href="#start">Contact</a></div></footer>
+
+<script src="assets/motion.js"></script>
+<script>
+const RAG = window.RAG;
+const TICK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+/* ---------- hero path: lessons tick in sequence once the card is seen ---------- */
+const LESSONS = [['Welcome to Acme', 4], ['Discounts and approvals', 6], ['Logging calls in the CRM', 5], ['Your first quote', 7]];
+const lessonsEl = document.getElementById('lessons');
+LESSONS.forEach(([t, m], i) => {
+  const d = document.createElement('div'); d.className = 'lesson ' + (i === 0 ? 'current' : 'locked');
+  d.innerHTML = `<span class="tick">${TICK}</span><span style="flex:1"></span><span class="meta">${m} min</span>`;
+  d.children[1].textContent = t; lessonsEl.appendChild(d);
+});
+const ring = document.getElementById('ring'), ringT = document.getElementById('ring-t');
+const setDone = (n) => {
+  [...lessonsEl.children].forEach((d, i) => {
+    const tick = d.querySelector('.tick');
+    const was = tick.classList.contains('done');
+    tick.classList.toggle('done', i < n);
+    if (i < n && !was && !RAG.reduce) { tick.classList.add('just'); }
+    d.className = 'lesson ' + (i < n ? '' : i === n ? 'current' : 'locked');
+    d.querySelector('.meta').textContent = i < n ? 'Passed' : `${LESSONS[i][1]} min`;
+  });
+  ring.style.strokeDashoffset = (276.46 * (1 - n / LESSONS.length)).toFixed(2);
+  ringT.textContent = `${n}/${LESSONS.length}`;
+};
+document.getElementById('path').addEventListener('reveal', () => {
+  if (RAG.reduce) return setDone(3);
+  [1, 2, 3].forEach((n, k) => setTimeout(() => setDone(n), 700 + k * 650));
+});
+
+/* ---------- quiz ---------- */
+const QUIZ = [
+  { q: 'Where is the staff wifi password posted?', o: ['In the onboarding email', 'At reception, every Friday', 'On the intranet home page'], r: 1, why: 'It rotates every Friday and is posted at reception.', src: 'Company handbook, p. 11' },
+  { q: 'A customer asks for 20% off an annual plan. What do you do?', o: ['Approve it yourself to close the deal', "Get the sales director's approval and log it in the CRM", "Say discounts aren't allowed"], r: 1, why: "Anything above 15 percent needs the sales director's approval, logged in the CRM.", src: 'Sales playbook, p. 4' },
+  { q: 'When should a call be logged in the CRM?', o: ['The same day', 'By the end of the week', 'Only when a deal closes'], r: 0, why: 'Every call is logged the same day.', src: 'CRM guide, p. 7' },
+];
+const box = document.getElementById('quizbox');
+let qi = 0;
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function renderQ() {
+  if (qi >= QUIZ.length) {
+    box.innerHTML = `<div class="cert"><p class="body" style="font-size:13px">Certificate of completion</p><p class="h3" style="margin:10px 0 4px">Sales onboarding</p><p class="body">3 of 3 tests passed. Waiting for manager sign-off.</p><div style="margin-top:18px;position:relative;z-index:1"><button type="button" class="pill pill-ghost pill-sm" id="restart">Start over</button></div></div>`;
+    document.getElementById('restart').onclick = () => { qi = 0; renderQ(); };
+    return;
+  }
+  const Q = QUIZ[qi];
+  box.innerHTML = `<div class="qbar" aria-hidden="true">${QUIZ.map((_, i) => `<i class="${i < qi ? 'on' : ''}"></i>`).join('')}</div>
+    <div class="swap" style="display:flex;flex-direction:column;gap:12px">
+    <p class="body" style="font-size:14px">Lesson ${qi + 1} test</p>
+    <p class="h3" style="font-size:22px;margin-bottom:6px">${esc(Q.q)}</p>
+    ${Q.o.map((o, i) => `<button type="button" class="opt" data-i="${i}">${esc(o)}</button>`).join('')}
+    <div id="fb"></div></div>`;
+  box.querySelectorAll('.opt').forEach((b) => b.onclick = () => answer(+b.dataset.i));
+}
+function answer(i) {
+  const Q = QUIZ[qi], right = i === Q.r;
+  box.querySelectorAll('.opt').forEach((b, j) => { b.disabled = true; if (j === Q.r) b.classList.add('right'); else if (j === i) b.classList.add('wrong'); });
+  const fb = document.getElementById('fb');
+  fb.innerHTML = `<div class="feedback"><p class="body" style="color:var(--ink)">${right ? 'Right.' : 'Not quite.'} ${esc(Q.why)}</p><span class="chip" style="align-self:flex-start">${esc(Q.src)}</span><div class="row-btns">${right ? `<button type="button" class="pill pill-blue pill-sm" id="next">${qi === QUIZ.length - 1 ? 'Finish the path' : 'Next lesson'}</button>` : `<button type="button" class="pill pill-ghost pill-sm" id="retry">Try again</button><span class="body" style="font-size:13px;align-self:center">This one comes back for review in 3 days.</span>`}</div></div>`;
+  if (right) { box.querySelectorAll('.qbar i')[qi].classList.add('on'); document.getElementById('next').onclick = () => { qi++; renderQ(); }; }
+  else document.getElementById('retry').onclick = renderQ;
+}
+renderQ();
+
+/* ---------- review timeline ---------- */
+const DAYS = { 1: ['lesson-d', 'Lesson 1'], 2: ['lesson-d', ''], 3: ['lesson-d', 'Lesson 2'], 5: ['review', 'Review'], 6: ['lesson-d', 'Lesson 3'], 8: ['lesson-d', 'Lesson 4'], 10: ['review', ''], 12: ['review', 'Review again'], 14: ['signed', 'Sign-off'] };
+const days = document.getElementById('days');
+for (let d = 1; d <= 14; d++) {
+  const el = document.createElement('div'); el.className = 'day'; el.style.setProperty('--i', d - 1);
+  const k = DAYS[d];
+  el.innerHTML = `${k && k[1] ? `<span class="dlabel" style="--i:${d - 1}">${k[1]}</span>` : ''}<span class="dot ${k ? k[0] : ''}" style="--i:${d - 1}"></span><span>Day ${d}</span>`;
+  days.appendChild(el);
+}
+
+/* ---------- hold to sign off (deliberate press: slow fill, fast release) ---------- */
+const sb = document.getElementById('signbtn');
+let holdT = 0;
+const start = (e) => { if (sb.classList.contains('signed')) return; sb.classList.add('pressing'); holdT = setTimeout(signed, RAG.reduce ? 0 : 1200); };
+const cancel = () => { sb.classList.remove('pressing'); clearTimeout(holdT); };
+function signed() {
+  sb.classList.remove('pressing'); sb.classList.add('signed'); document.getElementById('sign-t').textContent = 'Signed off';
+  document.getElementById('certslot').innerHTML = `<div class="cert" style="margin-top:6px"><p class="body" style="font-size:13px">Certificate of completion</p><p class="h3" style="margin:8px 0 4px">Priya · Sales onboarding</p><p class="body" style="font-size:14px">Company handbook v3 · Sales playbook v3 · CRM guide v2 · Pricing sheet v5</p></div>`;
+}
+sb.addEventListener('pointerdown', start); ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => sb.addEventListener(ev, cancel));
+sb.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); start(); } });
+sb.addEventListener('keyup', (e) => { if (e.key === 'Enter' || e.key === ' ') cancel(); });
+</script>
+</body>
+</html>

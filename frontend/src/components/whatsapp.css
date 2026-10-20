@@ -1,0 +1,34 @@
+/* WhatsApp section in Integrations. Prefixed .wa- ; reuses .key-row / .btn-* from styles.css. */
+.wa-link { display: flex; flex-direction: column; gap: 8px; }
+.wa-linked {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px;
+  background: rgba(37, 211, 102, .08); border: 1px solid rgba(37, 211, 102, .3);
+}
+.wa-ok { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #25d366; color: #fff; }
+.wa-code-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px;
+  border: 1px solid var(--hairline); background: var(--pearl);
+}
+.wa-code-card .integrations-hint { margin: 0; }
+.wa-code {
+  align-self: flex-start; padding: 10px 16px; border-radius: 12px 12px 12px 4px;
+  background: #d9fdd3; color: #111b21; font: 600 20px/1.2 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .06em;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .08);
+}
+.wa-code-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.wa-open { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; background: #25d366; }
+.wa-open:hover { background: #1fb658; }
+.wa-error { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--red, #c5221f); }
+
+.wa-admin { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--divider); display: flex; flex-direction: column; gap: 10px; }
+.wa-sub { margin: 0; display: flex; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 600; color: var(--ink); }
+.wa-setup { border: 1px solid var(--hairline); border-radius: 12px; padding: 10px 14px; background: var(--canvas); font-size: 13.5px; line-height: 1.55; color: var(--ink-80); }
+.wa-setup summary { cursor: pointer; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.wa-setup ol { margin: 10px 0 4px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.wa-setup pre { margin: 6px 0; white-space: pre-wrap; }
+.wa-pill { height: 20px; padding: 0 8px; border-radius: 999px; display: inline-grid; place-items: center; font: 600 11px/1 var(--font-text); background: #fff4e0; color: #9a5b00; }
+.wa-pill.is-ok { background: rgba(37, 211, 102, .12); color: #137a3a; }
+.wa-env { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wa-env li { display: flex; align-items: center; gap: 6px; color: #9a5b00; }
+.wa-env li.is-ok { color: #137a3a; }
+.wa-env code { color: var(--ink); }

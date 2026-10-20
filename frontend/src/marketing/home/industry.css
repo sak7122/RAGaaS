@@ -1,0 +1,75 @@
+/* Generated from the canvas design (Industry.template.html); scoped under .ip. */
+.ip .navlinks{display:flex;gap:26px}
+.ip{margin:0;background:#ffffff}
+.ip a{color:#0066cc}
+.ip a:hover{color:#0071e3}
+.ip{--ink:#1d1d1f;--muted:#6e6e73;--muted-d:#a1a1a6;--parch:#f5f5f7;--blue:#0066cc;--blue-d:#2997ff;--orange:#ff9f0a;--hair:rgba(0,0,0,.08);--ease:cubic-bezier(.23,1,.32,1);
+  font-family:"SF Pro Text","SF Pro Display",-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;color:var(--ink);background:#fff;-webkit-font-smoothing:antialiased}
+.ip *{box-sizing:border-box}
+.ip .disp{font-family:"SF Pro Display",-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif}
+.ip .wide{max-width:1240px;margin:0 auto;padding:0 24px}
+.ip .nav{position:sticky;top:0;z-index:40;background:rgba(22,22,23,.8);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
+.ip .navlink{color:#d2d2d7;text-decoration:none;font-size:13px;padding:14px 2px}
+.ip .navlink:hover{color:#fff}
+.ip .pill{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 22px;border-radius:9999px;border:1px solid transparent;font-size:17px;text-decoration:none;cursor:pointer;transition:transform .16s var(--ease),background-color .2s ease}
+.ip .pill:active{transform:scale(.97)}
+.ip .pill-blue{background:var(--blue);color:#fff}
+.ip .pill-blue:hover{background:#0071e3;color:#fff}
+.ip .pill-ghost{color:var(--blue);border-color:var(--blue);background:transparent}
+.ip .dark .pill-ghost{color:var(--blue-d);border-color:var(--blue-d)}
+.ip .pill:focus-visible,.ip .ind:focus-visible,.ip .navlink:focus-visible{outline:2px solid var(--blue-d);outline-offset:2px}
+.ip .h1{margin:0;font-weight:600;font-size:clamp(42px,6.4vw,80px);line-height:1.04;letter-spacing:-.028em}
+.ip .h2{margin:0;font-weight:600;font-size:clamp(30px,4.2vw,50px);line-height:1.07;letter-spacing:-.022em}
+.ip .lede{margin:0;font-size:clamp(18px,1.8vw,22px);line-height:1.45;color:var(--muted)}
+.ip .eyebrow{margin:0;font-size:14px;font-weight:600;color:var(--blue)}
+.ip .dark{background:#000;color:#f5f5f7}
+.ip .dark .lede{color:var(--muted-d)}
+.ip .dark .eyebrow{color:var(--blue-d)}
+.ip .inds{display:flex;flex-wrap:wrap;gap:8px}
+.ip .ind{min-height:40px;padding:0 16px;border-radius:9999px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#d2d2d7;font:500 14px/1 "SF Pro Text",-apple-system,sans-serif;cursor:pointer;transition:transform .16s var(--ease),background-color .2s ease,color .2s ease}
+.ip .ind:active{transform:scale(.97)}
+.ip .ind[aria-pressed="true"]{background:#f5f5f7;color:#000;border-color:#f5f5f7}
+.ip .swap{animation:swap .45s var(--ease) both}
+@keyframes swap{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.ip .swap2{animation-name:swap2}
+@keyframes swap2{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.ip .docs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.ip .doc{border-radius:20px;background:#fff;box-shadow:0 0 0 1px var(--hair);padding:20px;display:flex;flex-direction:column;gap:8px}
+.ip .doc.locked{background:#fffaf2;box-shadow:0 0 0 1px #f5d9a8}
+.ip .doc-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.ip .doc b{font-size:16px}
+.ip .doc small{font-size:12px;color:var(--muted);white-space:nowrap}
+.ip .doc p{margin:0;font-size:14px;line-height:1.45;color:#424245}
+.ip .doc .aud{font-size:12px;font-weight:600;color:var(--blue)}
+.ip .doc.locked .aud{color:#9a5b00}
+.ip .dq{font-size:13px;color:var(--muted);padding-top:6px;border-top:1px solid var(--hair)}
+.ip .qa{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+.ip .ibubble{align-self:flex-end;background:var(--blue);color:#fff;padding:12px 16px;border-radius:20px 20px 4px 20px;font-size:17px;max-width:90%}
+.ip .reply{background:#1d1d1f;color:#f5f5f7;padding:16px 18px;border-radius:20px 20px 20px 4px;font-size:17px;line-height:1.5}
+.ip .cite{display:inline-flex;margin-top:10px;font-size:13px;font-weight:600;color:var(--blue-d);border:1px solid #424245;border-radius:9999px;padding:5px 10px}
+.ip .source{border-radius:20px;background:#fff;color:var(--ink);padding:22px}
+.ip .source p{margin:0;font-family:"New York","Iowan Old Style",Georgia,serif;font-size:18px;line-height:1.65;color:#333336}
+.ip .source mark{background:rgba(0,102,204,.16);color:inherit;border-radius:3px;padding:1px 2px}
+.ip .gaps{border-radius:24px;background:#fff;box-shadow:0 0 0 1px var(--hair);padding:8px 24px}
+.ip .gap{display:grid;grid-template-columns:24px minmax(0,1fr) 40px;gap:14px;align-items:center;padding:16px 0;border-bottom:1px solid var(--hair);font-size:17px}
+.ip .gap:last-child{border-bottom:0}
+.ip .gap .n{font-weight:600;color:#9a5b00;text-align:right;font-variant-numeric:tabular-nums}
+.ip .path{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.ip .step{border-radius:20px;background:#1d1d1f;border:1px solid #2c2c2e;padding:20px;display:flex;flex-direction:column;gap:8px;min-height:150px}
+.ip .step span{font-size:12px;font-weight:600;color:var(--blue-d)}
+.ip .step b{font-size:17px}
+.ip .step small{margin-top:auto;font-size:13px;color:var(--muted-d)}
+.ip .quiz{border-radius:20px;background:#1d1d1f;border:1px solid #2c2c2e;padding:22px;display:flex;flex-direction:column;gap:10px}
+.ip .opt{padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.14);font-size:15px}
+.ip .opt.right{border-color:#30d158;background:rgba(48,209,88,.12)}
+@media (hover:hover) and (pointer:fine){.ip .ind:hover{color:#fff;border-color:rgba(255,255,255,.45)}
+.ip .ind[aria-pressed="true"]:hover{color:#000}}
+@media (max-width:860px){.ip .navlinks{display:none}
+.ip .docs,.ip .path{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.ip .qa{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:520px){.ip .docs,.ip .path{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){.ip .swap{animation:none!important}
+.ip .pill:active,.ip .ind:active{transform:none}}
+.ip a.ind{display:inline-flex;align-items:center;text-decoration:none}
+.ip .ind[aria-current="page"]{background:#f5f5f7;color:#000;border-color:#f5f5f7}
+@media (hover:hover) and (pointer:fine){.ip .ind[aria-current="page"]:hover{color:#000}}
