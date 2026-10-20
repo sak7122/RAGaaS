@@ -1,0 +1,39 @@
+/* /pricing — layered on industry.css (.ip). */
+.pr { background: #f5f5f7; min-height: 100vh; }
+.pr-hero { background: #000; color: #f5f5f7; padding: 96px 0 140px; }
+.pr-hero-in { display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center; }
+.pr-hero .lede { color: #a1a1a6; max-width: 40ch; }
+.pr-cur { display: inline-flex; padding: 3px; border-radius: 999px; background: rgba(255, 255, 255, .1); margin-top: 6px; }
+.pr-cur button { border: 0; background: transparent; color: #d2d2d7; padding: 8px 16px; border-radius: 999px; font: 500 14px/1 "SF Pro Text", -apple-system, sans-serif; cursor: pointer; transition: transform .16s cubic-bezier(.23, 1, .32, 1); }
+.pr-cur button[aria-pressed="true"] { background: #f5f5f7; color: #000; }
+.pr-cur button:active { transform: scale(.97); }
+.pr-plans-wrap { margin-top: -96px; padding-bottom: 96px; }
+.pr-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.pr-plan {
+  position: relative; display: flex; flex-direction: column; gap: 8px; padding: 28px 24px 24px;
+  border-radius: 24px; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 18px 40px rgba(0, 0, 0, .08);
+  animation: pr-up .6s cubic-bezier(.23, 1, .32, 1) both;
+}
+.pr-plan.is-featured { box-shadow: 0 0 0 2px #0066cc, 0 22px 50px rgba(0, 102, 204, .2); }
+@keyframes pr-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+.pr-badge { position: absolute; top: -12px; left: 24px; padding: 5px 10px; border-radius: 999px; background: #0066cc; color: #fff; font-size: 12px; font-weight: 600; }
+.pr-plan h2 { margin: 0; font-size: 21px; font-weight: 600; }
+.pr-price { margin: 4px 0 0; display: flex; align-items: baseline; gap: 4px; }
+.pr-amt { font-size: 36px; font-weight: 600; letter-spacing: -.02em; }
+.pr-per { font-size: 14px; color: #6e6e73; }
+.pr-blurb { margin: 0; font-size: 14.5px; color: #424245; line-height: 1.45; min-height: 42px; }
+.pr-plan ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 9px; font-size: 14px; color: #333336; }
+.pr-plan li { position: relative; padding-left: 22px; line-height: 1.4; }
+.pr-plan li::before { content: "✓"; position: absolute; left: 0; color: #30a46c; font-weight: 700; }
+.pr-cta { margin-top: 20px; justify-content: center; width: 100%; }
+.pr-faq-wrap { background: #fff; padding: 96px 0; }
+.pr-faq { max-width: 760px; display: flex; flex-direction: column; gap: 4px; }
+.pr-faq h2 { margin-bottom: 20px; }
+.pr-faq details { border-top: 1px solid rgba(0, 0, 0, .08); padding: 18px 0; }
+.pr-faq summary { cursor: pointer; font-size: 18px; font-weight: 500; list-style: none; }
+.pr-faq summary::-webkit-details-marker { display: none; }
+.pr-faq summary::after { content: "+"; float: right; color: #6e6e73; transition: transform .2s ease; }
+.pr-faq details[open] summary::after { transform: rotate(45deg); }
+.pr-faq p { margin: 10px 0 0; font-size: 16px; line-height: 1.6; color: #424245; }
+.pr .navlink[aria-current="page"] { color: #fff; }
+@media (prefers-reduced-motion: reduce) { .pr-plan { animation: none; } }

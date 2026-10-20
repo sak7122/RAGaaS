@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Key, Slack, Plus, Trash2, Copy, Check, Code, ChevronDown, RefreshCcw, MessageSquare } from "lucide-react";
+import { DEMO, demoFetch } from "../demoBackend";
+import { WhatsAppSection } from "./WhatsAppSection";
+import "./whatsapp.css";
+
+// Demo mode answers from canned data; everything else talks to the API.
+const fetch: typeof window.fetch = DEMO
+  ? ((input, init) => demoFetch(input as string, init as RequestInit)) as typeof window.fetch
+  : window.fetch.bind(window);
 
 interface Props {
   apiUrl: string;
@@ -200,8 +208,9 @@ function SlackSection({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeade
       `2. Copy the Signing Secret from your Slack app:`,
       `   Basic Information → App Credentials → Signing Secret`,
       ``,
-      `3. Set it on Cloud Run:`,
-      `   gcloud run services update ragaas-backend --set-env-vars SLACK_SIGNING_SECRET=<secret>`,
+      `3. Store it in Secret Manager (required: unsigned requests are refused);`,
+      `   the next deploy attaches it to the backend:`,
+      `   gcloud secrets create ragaas-slack-signing-secret --data-file=-   (paste, then Ctrl+D)`,
       ``,
       `Connected team ID: ${id}`,
     ].join("\n");
@@ -300,7 +309,13 @@ type SlackQuery = {
   ts: string;
 };
 
-function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHeaders">) {
+const CHANNELS = {
+  slack: { path: "/api/slack/queries", title: "Slack Questions", hint: <>All questions asked via <code>/ask</code> in Slack — visible to admins only.</>, at: "@" },
+  whatsapp: { path: "/api/integrations/whatsapp/queries", title: "WhatsApp Questions", hint: <>Questions your linked teammates sent on WhatsApp — visible to admins only.</>, at: "" },
+} as const;
+
+function SlackQueryLog({ apiUrl, authHeaders, channel = "slack" }: Pick<Props, "apiUrl" | "authHeaders"> & { channel?: keyof typeof CHANNELS }) {
+  const ch = CHANNELS[channel];
   const [queries, setQueries] = useState<SlackQuery[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -308,7 +323,7 @@ function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHead
   async function load() {
     setLoading(true);
     try {
-      const r = await fetch(`${apiUrl}/api/slack/queries`, { headers: authHeaders() });
+      const r = await fetch(`${apiUrl}${ch.path}`, { headers: authHeaders() });
       if (r.ok) setQueries(await r.json());
     } finally {
       setLoading(false);
@@ -324,17 +339,19 @@ function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHead
   return (
     <section className="integrations-section">
       <h3 className="integrations-section-title">
-        <MessageSquare size={14} /> Slack Questions
+        <MessageSquare size={14} /> {ch.title}
         <button type="button" className="btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={load}>
           <RefreshCcw size={11} /> Refresh
         </button>
       </h3>
-      <p className="integrations-hint">All questions asked via <code>/ask</code> in Slack — visible to admins only.</p>
+      <p className="integrations-hint">{ch.hint}</p>
 
       {loading ? (
         <p className="integrations-empty">Loading…</p>
       ) : queries.length === 0 ? (
-        <p className="integrations-empty">No Slack questions yet. Try <code>/ask</code> in a Slack channel.</p>
+        <p className="integrations-empty">
+          {channel === "slack" ? <>No Slack questions yet. Try <code>/ask</code> in a Slack channel.</> : "No WhatsApp questions yet."}
+        </p>
       ) : (
         <div className="key-list">
           {queries.map((q, i) => (
@@ -346,7 +363,7 @@ function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHead
               transition={{ delay: i * 0.03 }}
             >
               <div className="slack-query-header" onClick={() => setExpanded(expanded === i ? null : i)}>
-                <span className="slack-query-user">@{q.slack_user}</span>
+                <span className="slack-query-user">{ch.at}{q.slack_user}</span>
                 <span className="slack-query-q">{q.question}</span>
                 <span className={`faq-confidence ${confCls(q.score)}`}>{Math.round(q.score * 100)}%</span>
                 <span className="slack-query-time">{fmtTime(q.ts)}</span>
@@ -374,16 +391,20 @@ function SlackQueryLog({ apiUrl, authHeaders }: Pick<Props, "apiUrl" | "authHead
 }
 
 export function IntegrationsPanel({ apiUrl, authHeaders }: Props) {
+  const api = (path: string, init: RequestInit = {}) =>
+    fetch(`${apiUrl}${path}`, { ...init, headers: { ...authHeaders(), ...(init.headers ?? {}) } });
   return (
     <div className="insights-wrap">
       <div className="insights-head">
         <div>
           <h2 className="insights-title">Integrations</h2>
-          <p className="insights-sub">Embed RAGaaS anywhere — your website, Slack, or any tool.</p>
+          <p className="insights-sub">Embed RAGaaS anywhere — your website, Slack, WhatsApp, or any tool.</p>
         </div>
       </div>
       <SlackQueryLog apiUrl={apiUrl} authHeaders={authHeaders} />
       <SlackSection apiUrl={apiUrl} authHeaders={authHeaders} />
+      <WhatsAppSection api={api} />
+      <SlackQueryLog apiUrl={apiUrl} authHeaders={authHeaders} channel="whatsapp" />
       <WidgetSection apiUrl={apiUrl} authHeaders={authHeaders} />
     </div>
   );

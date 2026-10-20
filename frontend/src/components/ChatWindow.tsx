@@ -7,6 +7,7 @@ import {
 import { StreamingText, toast } from "./ui";
 import { DocumentMeta, docTitle } from "./DocumentList";
 import { DocumentPicker, fileType } from "./DocumentPicker";
+import { Feedback, HistoryBar, HistoryProps, SpeakButton, VoiceButton } from "./chatExtras";
 import "./askChat.css";
 
 // Ask: the signed-in chat. Answers cite document and page; a citation opens the source
@@ -41,6 +42,9 @@ export type ChatMessage = {
   timestamp?: number;
   scope?: string[];           // user turn: documents it searched (empty = all)
   scopedMiss?: string;        // assistant turn: the question the picked documents couldn't answer
+  answer_id?: string | null;  // assistant turn: id for 👍/👎 (absent when not recorded)
+  helpful?: boolean;          // the asker's rating, once given
+  streaming?: boolean;        // assistant turn still being written
 };
 
 interface ChatWindowProps {
@@ -56,6 +60,8 @@ interface ChatWindowProps {
   scope: string[];
   onScopeChange: (next: string[]) => void;
   workspaceName?: string;
+  onFeedback?: (index: number, helpful: boolean) => void;
+  history?: HistoryProps;
 }
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
@@ -316,7 +322,7 @@ type OpenSource = { list: Citation[]; index: number; terms: string[] };
 
 export function ChatWindow({
   messages, question, isLoading, onQuestionChange, onSend, onAsk, onShare, disabled,
-  docs, scope, onScopeChange, workspaceName,
+  docs, scope, onScopeChange, workspaceName, onFeedback, history,
 }: ChatWindowProps) {
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -401,10 +407,12 @@ export function ChatWindow({
   }
 
   const empty = messages.length === 0 && !isLoading;
+  const waiting = isLoading && messages[messages.length - 1]?.role !== "assistant";
   const current = source ? source.list[source.index] : null;
 
   return (
-    <div className="chat ak">
+    <div className={`chat ak${history ? " has-top" : ""}`}>
+      {history && <HistoryBar history={history} hasMessages={messages.length > 0} />}
       <div className="ak-thread" ref={threadRef} aria-live="polite" onScroll={onThreadScroll}>
         <AnimatePresence>
           {empty && (
@@ -484,7 +492,11 @@ export function ChatWindow({
           <motion.div key={i} className="ak-turn ak-turn-bot" {...enter}>
             <div className="ak-mark" aria-hidden="true"><BookOpen size={13} /></div>
             <div className="ak-body">
-              <div className="ak-a"><StreamingText text={m.text} active={i === lastAssistant} /></div>
+              <div className="ak-a">
+                {m.streaming
+                  ? <>{m.text}<span className="ak-caret" aria-hidden="true" /></>
+                  : <StreamingText text={m.text} active={false} />}
+              </div>
               {m.citations && m.citations.length > 0 && (
                 <div className="ak-cites" aria-label="Sources">
                   {uniqueSources(m.citations).map((c, k, list) => (
@@ -509,11 +521,15 @@ export function ChatWindow({
                 {m.citations && m.citations.length > 0 && m.retrieval && <Confidence score={m.retrieval.max_score} />}
                 {m.retrieval && <RetrievalTracePanel r={m.retrieval} />}
                 <span className="ak-spacer" />
-                {m.timestamp && <span className="ak-time">{relativeTime(m.timestamp)}</span>}
+                {m.timestamp && !m.streaming && <span className="ak-time">{relativeTime(m.timestamp)}</span>}
+                {!m.streaming && m.answer_id && onFeedback && (
+                  <Feedback value={m.helpful} onRate={(h) => onFeedback(i, h)} />
+                )}
+                {!m.streaming && <SpeakButton text={m.text} />}
                 <CopyButton text={m.text} />
                 <ShareButton msg={m} onShare={onShare} />
               </div>
-              {i === lastAssistant && followUps.length > 0 && (
+              {i === lastAssistant && !m.streaming && followUps.length > 0 && (
                 <div className="ak-follow" aria-label="Ask next">
                   {followUps.map((q, k) => (
                     <motion.button key={q} type="button" className="ak-follow-q" disabled={disabled}
@@ -530,7 +546,7 @@ export function ChatWindow({
         ))}
 
         <AnimatePresence>
-          {isLoading && (
+          {waiting && (
             <motion.div key="loading" className="ak-turn ak-turn-bot" {...enter} exit={{ opacity: 0, transition: { duration: 0.1 } }}>
               <div className="ak-mark is-busy" aria-hidden="true"><BookOpen size={13} /></div>
               <Thinking docs={searching} />
@@ -612,6 +628,7 @@ export function ChatWindow({
               rows={1}
               autoComplete="off"
             />
+            <VoiceButton onText={onQuestionChange} disabled={disabled || isLoading} base={question} />
             <button className="ak-send" type="submit" disabled={disabled || isLoading || !question.trim()} aria-label="Send">
               <motion.span key={sentPulse} className="ak-send-ico"
                 initial={sentPulse ? { transform: "translateY(14px)", opacity: 0 } : false}
@@ -620,7 +637,7 @@ export function ChatWindow({
               </motion.span>
             </button>
           </label>
-          <p className="ak-hint">Enter to send · Shift + Enter for a new line · <kbd>/</kbd> to focus</p>
+          <p className="ak-hint">Enter to send · Shift + Enter for a new line · <kbd>/</kbd> to focus · ask in any language</p>
         </form>
       </div>
 

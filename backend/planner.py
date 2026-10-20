@@ -259,9 +259,9 @@ def create_planner() -> Planner:
         try:
             import google.genai  # noqa: F401
             return GeminiPlanner(
-                model=os.getenv("PLANNER_MODEL", "gemini-2.5-flash"),
+                model=os.getenv("PLANNER_MODEL", "gemini-3.1-flash-lite"),
                 project=os.getenv("GCP_PROJECT_ID", ""),
-                location=os.getenv("VERTEX_LOCATION", "us-central1"),
+                location=os.getenv("GEMINI_LOCATION", "global"),   # Gemini 3.x is served from global
             )
         except Exception as exc:
             log.warning("GeminiPlanner init failed (%s); using MockPlanner", exc)

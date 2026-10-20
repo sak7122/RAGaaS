@@ -6,6 +6,7 @@
 import { MouseEvent, useLayoutEffect, useRef } from "react";
 import HomePage from "./home/HomePage";
 import IndustryPage from "./home/IndustryPage";
+import PricingPage from "./home/PricingPage";
 import "./marketing.css";
 import { createLife, reducedMotion } from "./life";
 import { initMotion } from "./motion";
@@ -25,7 +26,7 @@ type PageModule = {
   init: (root: HTMLElement, life: ReturnType<typeof createLife>, m: ReturnType<typeof initMotion>) => void;
 };
 
-type StaticPage = Exclude<MarketingPage, "home" | "industry">;
+type StaticPage = Exclude<MarketingPage, "home" | "industry" | "pricing">;
 
 const PAGES: Record<StaticPage, { html: string; mod: PageModule; title: string }> = {
   ask:     { html: askHtml,     mod: ask,     title: "Ask · RAGaaS" },
@@ -44,6 +45,7 @@ interface MarketingProps {
 export default function Marketing({ page, slug, signedIn, onNavigate }: MarketingProps) {
   if (page === "home") return <HomePage signedIn={signedIn} onNavigate={onNavigate} />;
   if (page === "industry") return <IndustryPage key={slug} slug={slug ?? ""} onNavigate={onNavigate} />;
+  if (page === "pricing") return <PricingPage onNavigate={onNavigate} />;
   return <MarketingPageView key={`${page}:${signedIn}`} page={page} signedIn={signedIn} onNavigate={onNavigate} />;
 }
 

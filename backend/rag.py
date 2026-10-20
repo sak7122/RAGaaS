@@ -12,7 +12,7 @@ import logging
 import math
 import os
 import re
-from typing import Protocol
+from typing import Iterator, Protocol
 
 log = logging.getLogger("ragaas")
 
@@ -146,16 +146,32 @@ def usable_history(history: list[dict] | None, turns: int = 4) -> list[dict]:
     return kept[-turns:]
 
 
+NOT_FOUND_ANSWER = "I cannot find that answer in your uploaded documents."
+
+
 class Generator(Protocol):
     def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str: ...
+    def generate_stream(self, question: str, chunks: list[dict],
+                        history: list[dict] | None = None) -> Iterator[str]: ...
 
 
 class MockGenerator:
     """Dev generator — grounded extractive answer assembled from retrieved chunks."""
 
+    def generate_stream(self, question: str, chunks: list[dict],
+                        history: list[dict] | None = None) -> Iterator[str]:
+        words = self.generate(question, chunks, history).split(" ")
+        for i, w in enumerate(words):
+            yield w if i == 0 else " " + w
+
+    def transcribe(self, data: bytes, mime_type: str) -> str:
+        """Dev stand-in for Gemini's reader: deterministic text so uploads work offline."""
+        kind = "recording" if mime_type.startswith("audio/") else "scan"
+        return f"Dev transcript of a {kind} ({mime_type}, {len(data)} bytes). Opening hours are nine to five."
+
     def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
         if not chunks:
-            return "I cannot find that answer in your uploaded documents."
+            return NOT_FOUND_ANSWER
         files = ", ".join(sorted({c["file_name"] for c in chunks}))
         top = chunks[0]["text"].strip().replace("\n", " ")
         if len(top) > 400:
@@ -177,15 +193,34 @@ class GeminiGenerator:
         "Judge every question on the current excerpts alone: earlier turns only tell you "
         "what the user means, never what the answer is. "
         "Be thorough and complete — cover all relevant points found in the excerpts. "
-        "Cite the source file and page inline like (file.pdf p.N)."
+        "Cite the source file and page inline like (file.pdf p.N). "
+        "Reply in the language the question is written in (for example Hindi, Tamil or "
+        "Spanish), even when the excerpts are in English; keep file names as they are."
     )
 
-    def __init__(self, model: str, project: str, location: str) -> None:
+    def __init__(self, model: str, project: str, location: str,
+                 fallback_model: str = "", fallback_location: str = "") -> None:
         from google import genai
         from google.genai import types
         self._types = types
         self.model = model
         self.client = genai.Client(vertexai=True, project=project, location=location)
+        # A retired or unavailable model must not take answers down: fall back once.
+        self.fallback_model = fallback_model
+        self._fallback_client = (
+            genai.Client(vertexai=True, project=project, location=fallback_location or location)
+            if fallback_model else None
+        )
+
+    def _content(self, contents, config):
+        try:
+            return self.client.models.generate_content(model=self.model, contents=contents, config=config)
+        except Exception as exc:
+            if not self._fallback_client:
+                raise
+            log.warning("model %s failed (%s); falling back to %s", self.model, exc, self.fallback_model)
+            return self._fallback_client.models.generate_content(
+                model=self.fallback_model, contents=contents, config=config)
 
     _REWRITE_SYSTEM = (
         "You are a search-query optimizer for a document retrieval system. "
@@ -211,10 +246,9 @@ class GeminiGenerator:
             "Output the retrieval keyword phrase:"
         )
         try:
-            resp = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=self._types.GenerateContentConfig(
+            resp = self._content(
+                prompt,
+                self._types.GenerateContentConfig(
                     system_instruction=self._REWRITE_SYSTEM,
                     temperature=0.1,
                     max_output_tokens=120,
@@ -237,10 +271,9 @@ class GeminiGenerator:
     def describe(self, title: str, excerpt: str) -> dict:
         """Title, summary and starter questions for one document (see backend/doc_profile.py)."""
         import json
-        resp = self.client.models.generate_content(
-            model=self.model,
-            contents=f"File title: {title}\n\n<document_excerpt>\n{excerpt}\n</document_excerpt>",
-            config=self._types.GenerateContentConfig(
+        resp = self._content(
+            f"File title: {title}\n\n<document_excerpt>\n{excerpt}\n</document_excerpt>",
+            self._types.GenerateContentConfig(
                 system_instruction=self._DESCRIBE_SYSTEM,
                 temperature=0.2,
                 max_output_tokens=400,
@@ -250,9 +283,7 @@ class GeminiGenerator:
         data = json.loads(resp.text or "{}")
         return data if isinstance(data, dict) else {}
 
-    def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
-        if not chunks:
-            return "I cannot find that answer in your uploaded documents."
+    def _prompt(self, question: str, chunks: list[dict], history: list[dict] | None) -> str:
         context = "\n\n".join(
             f"[{c['file_name']} p.{c.get('page', 1)}]\n{c['text']}" for c in chunks
         )
@@ -264,22 +295,66 @@ class GeminiGenerator:
             ) + "\n\n"
         # Defense against prompt injection from untrusted PDF text: the context is
         # clearly fenced and the system prompt forbids following instructions in it.
-        prompt = (
+        return (
             f"{history_block}"
             f"Document excerpts:\n{context}\n\n"
             f"Question: {question}\n\n"
             f"Answer using only the excerpts above."
         )
-        resp = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=self._types.GenerateContentConfig(
-                system_instruction=self.SYSTEM,
-                temperature=0.2,
-                max_output_tokens=1500,
-            ),
+
+    def _answer_config(self):
+        return self._types.GenerateContentConfig(
+            system_instruction=self.SYSTEM, temperature=0.2, max_output_tokens=1500)
+
+    def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
+        if not chunks:
+            return NOT_FOUND_ANSWER
+        resp = self._content(self._prompt(question, chunks, history), self._answer_config())
+        return (resp.text or "").strip() or NOT_FOUND_ANSWER
+
+    def generate_stream(self, question: str, chunks: list[dict],
+                        history: list[dict] | None = None) -> Iterator[str]:
+        """Answer text as it is written. Falls back to one non-streamed answer if the
+        stream can't start (e.g. the primary model is unavailable)."""
+        if not chunks:
+            yield NOT_FOUND_ANSWER
+            return
+        prompt = self._prompt(question, chunks, history)
+        try:
+            stream = self.client.models.generate_content_stream(
+                model=self.model, contents=prompt, config=self._answer_config())
+            sent = False
+            for part in stream:
+                if part.text:
+                    sent = True
+                    yield part.text
+            if not sent:
+                yield NOT_FOUND_ANSWER
+        except Exception as exc:
+            log.warning("stream failed (%s); answering without streaming", exc)
+            yield self.generate(question, chunks, history)
+
+    _TRANSCRIBE_SYSTEM = (
+        "Transcribe all readable text in this file exactly, in reading order. Keep headings, "
+        "lists and table rows (one row per line, cells separated by ' | '). Do not summarise, "
+        "translate or add anything. If there is no readable text, return nothing."
+    )
+
+    def transcribe(self, data: bytes, mime_type: str) -> str:
+        """Text from a scan, photo or audio recording (Gemini reads all three)."""
+        is_audio = mime_type.startswith("audio/")
+        instruction = (
+            "Transcribe this recording verbatim. Mark speaker changes with a new line. "
+            "Return only the transcript." if is_audio else self._TRANSCRIBE_SYSTEM
         )
-        return (resp.text or "").strip() or "I cannot find that answer in your uploaded documents."
+        if mime_type == "application/pdf":
+            instruction += " Start each page with its own line '=== Page N ===' (N = page number)."
+        resp = self._content(
+            [self._types.Part.from_bytes(data=data, mime_type=mime_type), "Transcribe this file."],
+            self._types.GenerateContentConfig(
+                system_instruction=instruction, temperature=0.0, max_output_tokens=32000),
+        )
+        return (resp.text or "").strip()
 
 
 # ── Factories ─────────────────────────────────────────────────────────────────
@@ -310,10 +385,14 @@ def create_embedder() -> Embedder:
 def create_generator() -> Generator:
     if _use_prod():
         try:
+            # Gemini 3.x models are served from the "global" endpoint on Vertex;
+            # 2.5 stays as the fallback until it is retired.
             return GeminiGenerator(
-                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+                model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
                 project=os.getenv("GCP_PROJECT_ID", ""),
-                location=os.getenv("VERTEX_LOCATION", "us-central1"),
+                location=os.getenv("GEMINI_LOCATION", "global"),
+                fallback_model=os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite"),
+                fallback_location=os.getenv("VERTEX_LOCATION", "us-central1"),
             )
         except Exception as exc:
             log.warning("GeminiGenerator init failed (%s); using MockGenerator", exc)

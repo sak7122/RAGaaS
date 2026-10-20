@@ -103,8 +103,8 @@ def grade_item(item: Item, response: Any, grader: FreeTextGrader) -> Grade:
 def create_free_text_grader() -> FreeTextGrader:
     if os.getenv("RAGAAS_ENV") == "production" and os.getenv("GCP_PROJECT_ID"):
         try:
-            grader = GeminiGrader(os.getenv("GRADER_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")),
-                                  os.environ["GCP_PROJECT_ID"], os.getenv("VERTEX_LOCATION", "us-central1"))
+            grader = GeminiGrader(os.getenv("GRADER_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")),
+                                  os.environ["GCP_PROJECT_ID"], os.getenv("GEMINI_LOCATION", "global"))
             log.info("academy grader: gemini (%s)", grader.model)
             return grader
         except Exception as exc:

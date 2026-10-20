@@ -19,6 +19,7 @@ import { MembersPanel, Member } from "./components/MembersPanel";
 import { InsightsPanel, Insights } from "./components/InsightsPanel";
 import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { AcademyPanel } from "./components/AcademyPanel";
+import type { ConvSummary, HistoryProps } from "./components/chatExtras";
 import { AuthForm } from "./components/AuthForm";
 import { SignUpForm, SignUpProfile } from "./components/SignUpForm";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -79,17 +80,26 @@ type Status = {
 
 // Error bodies used to be saved as message text (a list from a 422); coerce on load
 // so an old bad entry can't crash the chat.
+function sanitizeMessages(parsed: unknown): ChatMessage[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+    .map((m) => ({ ...m, streaming: false, text: typeof m.text === "string" ? m.text : "Something went wrong with this message." }));
+}
+
 function loadChatHistory(tenantEmail: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`ragaas:chat:${tenantEmail}`);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-      .map((m) => ({ ...m, text: typeof m.text === "string" ? m.text : "Something went wrong with this message." }));
+    return sanitizeMessages(raw ? JSON.parse(raw) : []);
   } catch {
     return [];
   }
+}
+
+// The conversation the chat is showing, so a reload reopens it from the server.
+const convKey = (email: string) => `ragaas:conv:${email}`;
+function loadConversationId(email: string): string | null {
+  try { return localStorage.getItem(convKey(email)); } catch { return null; }
 }
 
 // FastAPI errors carry `detail` as a string, or as a list of validation issues.
@@ -136,6 +146,7 @@ function App() {
   const [scope, setScope]             = useState<string[]>([]);
   const [members, setMembers]         = useState<Member[]>([]);
   const [view, setView]               = useState<"chat" | "insights" | "academy" | "integrations">("chat");
+  const [conversationId, setConversationIdState] = useState<string | null>(null);
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
   const [authMode, setAuthMode]       = useState<"signin" | "signup">(
@@ -172,6 +183,87 @@ function App() {
 
   function authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${tokenRef.current}` };
+  }
+
+  function api(path: string, init: RequestInit = {}) {
+    return apiFetch(`${API}${path}`, { ...init, headers: { ...authHeaders(), ...(init.headers ?? {}) } });
+  }
+
+  function setConversationId(id: string | null) {
+    setConversationIdState(id);
+    try {
+      if (id) localStorage.setItem(convKey(tenantEmail), id);
+      else localStorage.removeItem(convKey(tenantEmail));
+    } catch { /* private mode */ }
+  }
+
+  // Reopen the last conversation from the server (history follows the person
+  // across devices); localStorage only covers the moment before it loads.
+  useEffect(() => {
+    if (!online || !tenantEmail) return;
+    const id = loadConversationId(tenantEmail);
+    setConversationIdState(id);
+    if (!id) return;
+    let live = true;
+    api(`/api/conversations/${id}`).then(async (r) => {
+      if (!live) return;
+      if (r.ok) setMessages(sanitizeMessages((await r.json()).messages));
+      else if (r.status === 404) setConversationId(null);
+    }).catch(() => { /* offline: keep local copy */ });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, tenantEmail]);
+
+  function newChat() {
+    setMessages([]);
+    setConversationId(null);
+    saveChatHistory(tenantEmail, []);
+  }
+
+  const history: HistoryProps = {
+    current: conversationId,
+    load: async (): Promise<ConvSummary[]> => {
+      const r = await api("/api/conversations");
+      return r.ok ? r.json() : [];
+    },
+    open: async (id: string) => {
+      const r = await api(`/api/conversations/${id}`);
+      if (!r.ok) { toast("Couldn't open that conversation", "error"); return; }
+      const msgs = sanitizeMessages((await r.json()).messages);
+      setMessages(msgs);
+      saveChatHistory(tenantEmail, msgs);
+      setConversationId(id);
+      setView("chat");
+    },
+    remove: async (id: string) => {
+      await api(`/api/conversations/${id}`, { method: "DELETE" });
+      if (id === conversationId) newChat();
+    },
+    newChat,
+  };
+
+  async function handleFeedback(index: number, helpful: boolean) {
+    const m = messages[index];
+    if (!m?.answer_id) return;
+    setMessages((cur) => cur.map((x, i) => (i === index ? { ...x, helpful } : x)));
+    try {
+      await api("/api/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer_id: m.answer_id, helpful, conversation_id: conversationId }),
+      });
+    } catch { /* rating is best effort */ }
+  }
+
+  async function handleImportUrl(url: string): Promise<string | null> {
+    try {
+      const r = await api("/api/import-url", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+      });
+      if (r.ok) return null;
+      return errorText(await r.json().catch(() => null), r.status);
+    } catch {
+      return "Network error. Try again.";
+    }
   }
 
   const refreshStatus = useCallback(async () => {
@@ -308,40 +400,60 @@ function App() {
     const next: ChatMessage[] = [...messages, { role: "user", text, timestamp: Date.now(), scope: files }];
     setMessages(next);
     setIsLoading(true);
+    // The answer arrives as newline-delimited JSON: sources first, then the text as
+    // it is written, then a final event with the ids for feedback and history.
+    const st: { msg: ChatMessage | null } = { msg: null };
+    const show = (m: ChatMessage) => { st.msg = m; setMessages([...next, m]); };
     try {
       const history = messages.slice(-4).map((m) => ({ role: m.role, text: String(m.text ?? "").slice(0, 2000) }));
-      const res  = await apiFetch(`${API}/api/chat`, {
+      const res = await apiFetch(`${API}/api/chat/stream`, {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history, file_names: files.length ? files : null }),
+        body: JSON.stringify({ message: text, history, file_names: files.length ? files : null,
+                               conversation_id: conversationId }),
       });
-      const body = await res.json();
-      const answer = res.ok && typeof body.answer === "string" ? body.answer : errorText(body, res.status);
-      // Nothing cited inside the picked documents: offer to ask the whole workspace.
-      const scopedMiss = res.ok && files.length > 0 && (body.citations ?? []).length === 0 ? text : undefined;
-      const updated: ChatMessage[] = [
-        ...next,
-        {
-          role: "assistant",
-          text: answer,
-          citations: body.citations ?? [],
-          retrieval: body.retrieval,
-          timestamp: Date.now(),
-          scopedMiss,
-        },
-      ];
-      setMessages(updated);
-      saveChatHistory(tenantEmail, updated);
+      if (!res.ok || !res.body) {
+        show({ role: "assistant", text: errorText(await res.json().catch(() => null), res.status), timestamp: Date.now() });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let written = "";
+      let citations: ChatMessage["citations"] = [];
+      let retrieval: ChatMessage["retrieval"];
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === "meta") {
+            citations = ev.citations ?? [];
+            retrieval = ev.retrieval;
+          } else if (ev.type === "delta") {
+            written += ev.text;
+            show({ role: "assistant", text: written, citations, retrieval, timestamp: Date.now(), streaming: true });
+          } else if (ev.type === "done") {
+            // Nothing cited inside the picked documents: offer to ask the whole workspace.
+            const scopedMiss = files.length > 0 && (citations ?? []).length === 0 ? text : undefined;
+            show({ role: "assistant", text: ev.answer, citations, retrieval: ev.retrieval ?? retrieval,
+                   timestamp: Date.now(), answer_id: ev.answer_id, scopedMiss });
+            if (ev.conversation_id) setConversationId(ev.conversation_id);
+          }
+        }
+      }
+      if (st.msg?.streaming) show({ ...st.msg, streaming: false });   // stream cut short
       refreshStatus();
     } catch {
-      const updated: ChatMessage[] = [
-        ...next,
-        { role: "assistant", text: "Network error — is the backend running?" },
-      ];
-      setMessages(updated);
-      saveChatHistory(tenantEmail, updated);
+      show(st.msg ? { ...st.msg, streaming: false } : { role: "assistant", text: "Network error — is the backend running?" });
     } finally {
       setIsLoading(false);
+      if (st.msg) saveChatHistory(tenantEmail, [...next, { ...st.msg, streaming: false }]);
     }
   }
 
@@ -498,6 +610,7 @@ function App() {
     try { await signOutUser(); } catch { /* ignore */ }
     setView("chat");
     setMessages([]);
+    setConversationIdState(null);
     navigate("/");
   }, [navigate]);
 
@@ -703,6 +816,7 @@ function App() {
             <InsightsPanel
               fetchInsights={fetchInsights}
               onQuickAsk={(q) => { setView("chat"); setQuestion(q); }}
+              api={api}
             />
           </ErrorBoundary>
         ) : view === "academy" ? (
@@ -720,6 +834,7 @@ function App() {
               authToken={idToken}
               disabled={!online}
               onComplete={refreshStatus}
+              onImportUrl={canManageDocs ? handleImportUrl : undefined}
             />
             <ErrorBoundary>
               <ChatWindow
@@ -735,6 +850,8 @@ function App() {
                 scope={scope}
                 onScopeChange={setScope}
                 workspaceName={status?.tenant_name}
+                onFeedback={handleFeedback}
+                history={history}
               />
             </ErrorBoundary>
           </>

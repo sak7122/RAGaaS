@@ -13,6 +13,7 @@ type DocMeta = {
 type Member = { uid: string; email: string; role: string; invited_at: string; joined_at: string | null };
 
 import { demoAcademy } from "./demoAcademy";
+import { demoProduct, demoStream } from "./demoProduct";
 
 const now = () => new Date().toISOString();
 
@@ -152,6 +153,13 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
 
   const academy = demoAcademy(path, method, typeof init?.body === "string" ? JSON.parse(init.body) : null);
   if (academy) return academy;
+  const parsed = typeof init?.body === "string" ? (() => { try { return JSON.parse(init.body as string); } catch { return null; } })() : null;
+  if (path.endsWith("/api/chat/stream") && method === "POST") {
+    return demoStream(cannedAnswer(String(parsed?.message ?? ""), parsed?.file_names ?? []), String(parsed?.message ?? ""),
+                      parsed?.conversation_id ?? null);
+  }
+  const product = demoProduct(path, method, parsed);
+  if (product) return product;
 
   if (path.endsWith("/api/tenant/status")) return json(demoStatus());
   if (path.endsWith("/api/documents") && method === "GET") return json(demoDocs);
@@ -226,6 +234,24 @@ export async function demoFetch(input: string, init?: RequestInit): Promise<Resp
     instructions: "Add /ask slash command pointing to your Cloud Run URL + /api/integrations/slack/command",
   });
   if (path.includes("/api/integrations/slack/connections/") && method === "DELETE") return json({ ok: true });
+
+  if (path.endsWith("/api/integrations/whatsapp/link") && method === "GET") return json(
+    { available: true, send_to: "+1 555 013 2233", linked: false, phone: null, linked_at: null });
+  if (path.endsWith("/api/integrations/whatsapp/link") && method === "POST") return json({
+    code: "482913", message: "link 482913", send_to: "+1 555 013 2233",
+    expires_at: new Date(Date.now() + 15 * 60000).toISOString(),
+  });
+  if (path.endsWith("/api/integrations/whatsapp/link") && method === "DELETE") return json({ ok: true });
+  if (path.endsWith("/api/integrations/whatsapp/connections") && method === "GET") return json({
+    numbers: [{ phone_number_id: "109876543210", display_phone: "+1 555 013 2233", connected_at: now() }],
+    webhook_url: "https://ragaas-backend.example.run.app/api/integrations/whatsapp/webhook",
+    configured: { access_token: true, app_secret: true, verify_token: false },
+  });
+  if (path.includes("/api/integrations/whatsapp/connect")) return json({ ok: true });
+  if (path.endsWith("/api/integrations/whatsapp/queries")) return json([
+    { question: "When is security training due?", slack_user: "maya@acme.com", score: 0.81,
+      answer: "Within five business days of your start date.", ts: new Date(Date.now() - 1800000).toISOString() },
+  ]);
 
   if (path.endsWith("/api/insights")) {
     return json({
