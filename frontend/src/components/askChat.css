@@ -472,3 +472,13 @@ div.chat.ak.has-top { grid-template-rows: auto 1fr auto; }
 .up-url-msg { font-size: 12.5px; color: #c5221f; }
 .up-url-msg.is-ok { color: #1a7f37; }
 @media (hover: hover) and (pointer: fine) { .up-extra:hover:not(:disabled) { background: var(--parchment); } }
+/* Answers are Markdown now: normal whitespace, typing caret at the end of the text */
+.ak-a { white-space: normal; font: inherit; }
+.ak-a.is-typing .am > :last-child:not(ul):not(ol):not(.am-table):not(.am-code)::after,
+.ak-a.is-typing .am > :is(ul, ol):last-child > li:last-child::after {
+  content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -0.15em;
+  background: var(--primary); border-radius: 1px; animation: ak-blink 1s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ak-a.is-typing .am > :last-child::after { animation: none; }
+}

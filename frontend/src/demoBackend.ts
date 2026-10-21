@@ -65,10 +65,13 @@ function cannedAnswer(question: string, scope: string[] = []) {
   ).sort();
   return {
     answer:
-      `Based on your documents, here's what I found regarding "${question.slice(0, 60)}": ` +
-      "Q3 revenue grew 18% YoY to $4.2M, driven by enterprise expansion. The roadmap " +
-      "prioritizes the multi-region rollout for Q1 2026. (This is a demo response — wire " +
-      "the real backend to replace it with live RAG answers.)",
+      "Q3 revenue was **$4.2M**, up **18% year over year**, led by the enterprise segment (Q3_Earnings_Report.pdf p.4).\n\n" +
+      "### What's behind it\n\n" +
+      "- **Enterprise expansion** drove most of the growth (Q3_Earnings_Report.pdf p.4).\n" +
+      "- Next up: **multi-region availability** ships first in Q1 2026, then SSO (Product_Roadmap_2026.pdf p.2).\n\n" +
+      "| Metric | Q3 | Change |\n|---|---|---|\n| Revenue | $4.2M | +18% YoY |\n| Lead segment | Enterprise | Fastest growing |\n\n" +
+      "Growth is measured as $\\frac{\\text{Q3}_{2025} - \\text{Q3}_{2024}}{\\text{Q3}_{2024}}$.\n\n" +
+      `**Key takeaway:** revenue is growing fast and the roadmap builds on enterprise demand.\n\n_Demo answer to “${question.slice(0, 60)}”._`,
     citations: [
       { file_name: "Q3_Earnings_Report.pdf", page: 4, chunk_index: 12, score: 0.92, excerpt: "Total revenue for the third quarter reached $4.2M, an 18% increase year over year, led by enterprise segment growth." },
       { file_name: "Product_Roadmap_2026.pdf", page: 2, chunk_index: 3, score: 0.74, excerpt: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
