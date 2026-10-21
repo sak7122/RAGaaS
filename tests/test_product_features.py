@@ -224,3 +224,14 @@ def test_digest_preview_subscribe_and_cron(monkeypatch):
     assert client.post("/api/cron/digest", headers={"X-Cron-Token": "wrong"}).status_code == 403
     assert client.post("/api/cron/digest", headers={"X-Cron-Token": "t0k"}).json()["sent"] == 1
     assert sent == ["tenant-a@ragaas.local"]
+
+
+def test_unexpected_error_is_json_with_cors(monkeypatch):
+    """A crash must reach the browser as a readable 500, not a CORS "network error"."""
+    def boom(_tenant):
+        raise RuntimeError("BulkWriter is closed")
+    monkeypatch.setattr(main.index_store, "list_docs", boom)
+    r = client.get("/api/documents", headers={**A, "Origin": "http://localhost:5173"})
+    assert r.status_code == 500
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert "try again" in r.json()["detail"]
