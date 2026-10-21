@@ -136,8 +136,22 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ErrorJSONMiddleware(BaseHTTPMiddleware):
+    """Turn an unexpected exception into a JSON 500 *inside* the CORS layer. Without
+    this the 500 carries no CORS headers and the browser reports a bare "network
+    error" instead of a message."""
+
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            log.exception("unhandled error %s %s: %s", request.method, request.url.path, exc)
+            return JSONResponse({"detail": "Something went wrong on our side. Please try again."}, status_code=500)
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="RAGaaS API", version="0.1.0")
+app.add_middleware(ErrorJSONMiddleware)   # added first = innermost: runs inside CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=config.cors_origin_regex,

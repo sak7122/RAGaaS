@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -176,9 +178,7 @@ class FirestoreIndexStore:
         # Replace this file's chunks. Every chunk is stored (keyword fallback
         # needs the text); only embedded ones are reachable by find_nearest.
         self._delete_chunks_for_file(tenant_id, file_name)
-        # BulkWriter sends writes in parallel (a long book is thousands of
-        # chunks; serial 500-op batches would outlast the request timeout).
-        writer = self._db.bulk_writer()
+        writes = []
         for ch in chunks:
             cid = self._chunk_id(file_name, ch.get("page", 1), ch.get("chunk_index", 0))
             row = {
@@ -189,16 +189,47 @@ class FirestoreIndexStore:
             }
             if ch.get("embedding"):
                 row["embedding"] = Vector(ch["embedding"])
-            writer.set(self._chunks(tenant_id).document(cid), row)
-        writer.close()          # flushes and waits for every write
+            writes.append((self._chunks(tenant_id).document(cid), row))
+        self._commit(writes)
         # Written last: the document only appears in listings once its chunks exist.
         self._col(tenant_id).document(file_name).set(meta)
 
+    # Batched commits run a few at a time (a long book is thousands of chunks;
+    # serial batches would outlast the request timeout). Each batch retries on its
+    # own. This replaces BulkWriter, whose background retry of a failed write could
+    # fire after close() and crash the upload ("BulkWriter is closed").
+    BATCH_OPS = 400
+    PARALLEL = 10
+    ATTEMPTS = 4
+
+    def _commit(self, writes: list) -> None:
+        """writes: [(ref, data)] to set, or [(ref, None)] to delete."""
+        groups = [writes[i:i + self.BATCH_OPS] for i in range(0, len(writes), self.BATCH_OPS)]
+
+        def run(group) -> None:
+            for attempt in range(self.ATTEMPTS):
+                try:
+                    batch = self._db.batch()
+                    for ref, data in group:
+                        if data is None:
+                            batch.delete(ref)
+                        else:
+                            batch.set(ref, data)
+                    batch.commit()
+                    return
+                except Exception as exc:
+                    if attempt == self.ATTEMPTS - 1:
+                        raise
+                    log.warning("firestore batch failed (%s); retry %d", exc, attempt + 1)
+                    time.sleep(0.5 * 2 ** attempt)
+
+        if not groups:
+            return
+        with ThreadPoolExecutor(max_workers=min(self.PARALLEL, len(groups))) as pool:
+            list(pool.map(run, groups))       # list() re-raises the first failure
+
     def _delete_refs(self, refs) -> None:
-        writer = self._db.bulk_writer()
-        for ref in refs:
-            writer.delete(ref)
-        writer.close()
+        self._commit([(ref, None) for ref in refs])
 
     def _delete_chunks_for_file(self, tenant_id: str, file_name: str) -> None:
         q = self._chunks(tenant_id).where("file_name", "==", file_name).select([])
