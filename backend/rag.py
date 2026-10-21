@@ -195,7 +195,14 @@ class GeminiGenerator:
         "Be thorough and complete — cover all relevant points found in the excerpts. "
         "Cite the source file and page inline like (file.pdf p.N). "
         "Reply in the language the question is written in (for example Hindi, Tamil or "
-        "Spanish), even when the excerpts are in English; keep file names as they are."
+        "Spanish), even when the excerpts are in English; keep file names as they are. "
+        "Format the answer in Markdown so it is easy to scan: start with a one- or two-sentence "
+        "direct answer; when the answer has several parts, use short sections with ### headings; "
+        "use numbered lists for steps and bullet lists for items; when comparing several things "
+        "(types, options, rules, differences) add a compact table; **bold** the key terms; write "
+        "formulas and notation in LaTeX between $ signs (for example $A \\rightarrow B$). Put each "
+        "citation right after the sentence it supports. For long answers, end with a one-line "
+        "**Key takeaway**. Never add facts that are not in the excerpts."
     )
 
     def __init__(self, model: str, project: str, location: str,
@@ -304,7 +311,7 @@ class GeminiGenerator:
 
     def _answer_config(self):
         return self._types.GenerateContentConfig(
-            system_instruction=self.SYSTEM, temperature=0.2, max_output_tokens=1500)
+            system_instruction=self.SYSTEM, temperature=0.2, max_output_tokens=2500)
 
     def generate(self, question: str, chunks: list[dict], history: list[dict] | None = None) -> str:
         if not chunks:

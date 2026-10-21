@@ -8,6 +8,7 @@ import { StreamingText, toast } from "./ui";
 import { DocumentMeta, docTitle } from "./DocumentList";
 import { DocumentPicker, fileType } from "./DocumentPicker";
 import { Feedback, HistoryBar, HistoryProps, SpeakButton, VoiceButton } from "./chatExtras";
+import { AnswerMarkdown, useTypedText } from "./AnswerMarkdown";
 import "./askChat.css";
 
 // Ask: the signed-in chat. Answers cite document and page; a citation opens the source
@@ -320,6 +321,18 @@ function useTypedPlaceholder(ref: React.RefObject<HTMLTextAreaElement | null>, e
 
 type OpenSource = { list: Citation[]; index: number; terms: string[] };
 
+/** One answer: Markdown with math and citation chips, typed in while it streams. */
+function AnswerBody({ text, streaming, docs, onCite }: {
+  text: string; streaming: boolean; docs: DocumentMeta[]; onCite: (file: string, page: number) => void;
+}) {
+  const typed = useTypedText(text, streaming);
+  return (
+    <div className={`ak-a${typed.typing ? " is-typing" : ""}`}>
+      <AnswerMarkdown text={typed.text} onCite={onCite} titleFor={(f) => titleFor(docs, f)} />
+    </div>
+  );
+}
+
 export function ChatWindow({
   messages, question, isLoading, onQuestionChange, onSend, onAsk, onShare, disabled,
   docs, scope, onScopeChange, workspaceName, onFeedback, history,
@@ -492,11 +505,14 @@ export function ChatWindow({
           <motion.div key={i} className="ak-turn ak-turn-bot" {...enter}>
             <div className="ak-mark" aria-hidden="true"><BookOpen size={13} /></div>
             <div className="ak-body">
-              <div className="ak-a">
-                {m.streaming
-                  ? <>{m.text}<span className="ak-caret" aria-hidden="true" /></>
-                  : <StreamingText text={m.text} active={false} />}
-              </div>
+              <AnswerBody text={m.text} streaming={!!m.streaming} docs={docs}
+                onCite={(file, page) => {
+                  const list = uniqueSources(m.citations ?? []);
+                  if (!list.length) return;
+                  let index = list.findIndex((c) => c.file_name === file && c.page === page);
+                  if (index < 0) index = Math.max(0, list.findIndex((c) => c.file_name === file));
+                  setSource({ list, index, terms: m.retrieval?.query_terms ?? [] });
+                }} />
               {m.citations && m.citations.length > 0 && (
                 <div className="ak-cites" aria-label="Sources">
                   {uniqueSources(m.citations).map((c, k, list) => (
