@@ -162,11 +162,11 @@ export function HistoryBar({ history, hasMessages }: { history: HistoryProps; ha
     <>
       <div className="ak-topbar">
         <button type="button" className="ak-top-btn" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open}>
-          <History size={14} aria-hidden="true" /> History
+          <History size={14} aria-hidden="true" /> <span className="ak-top-label">History</span>
         </button>
         {hasMessages && (
           <button type="button" className="ak-top-btn" onClick={history.newChat}>
-            <MessageSquarePlus size={14} aria-hidden="true" /> New chat
+            <MessageSquarePlus size={14} aria-hidden="true" /> <span className="ak-top-label">New chat</span>
           </button>
         )}
       </div>

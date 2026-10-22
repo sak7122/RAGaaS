@@ -482,3 +482,23 @@ div.chat.ak.has-top { grid-template-rows: auto 1fr auto; }
 @media (prefers-reduced-motion: reduce) {
   .ak-a.is-typing .am > :last-child::after { animation: none; }
 }
+/* ── Phones: native chat feel ─────────────────────────────────────────────
+   History / New chat float as round icon buttons instead of taking a row,
+   and answers use the system text face at the platform's body size. */
+@media (max-width: 640px) {
+  div.chat.ak.has-top { grid-template-rows: minmax(0, 1fr) auto; }
+  .ak-topbar { position: absolute; top: 8px; right: 12px; z-index: 5; padding: 0; gap: 8px; }
+  .ak-top-btn {
+    width: 38px; height: 38px; padding: 0; justify-content: center; border-radius: 50%;
+    background: rgba(255, 255, 255, .86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .08);
+  }
+  .ak-top-btn svg { width: 17px; height: 17px; }
+  .ak-top-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  .ak-thread { padding-top: 56px; }
+  .ak .am { font: 400 17px/1.5 var(--font-text); letter-spacing: -.2px; font-feature-settings: "kern"; }
+  .ak-dock { padding-bottom: 8px; }
+  .ak-dock .scope-row { padding: 4px 0 8px; }
+}

@@ -3795,9 +3795,6 @@ html, body { overflow-x: clip; }
 .learn-ask-answer { border-left: 3px solid var(--primary); padding-left: var(--sp-sm); }
 
 @media (max-width: 833px) {
-  /* Academy gets the whole phone screen; the chat sidebar has nothing for it. */
-  .shell:has(> .workspace > .acad) { grid-template-rows: 52px minmax(0, 1fr); }
-  .shell:has(> .workspace > .acad) > .sidebar { display: none; }
   .learn-title { font-size: 22px; }
   .learn-result { flex-direction: column; gap: var(--sp-sm); padding: var(--sp-md); }
   .learn-ask-form { flex-direction: column; }
@@ -3885,4 +3882,107 @@ html, body { overflow-x: clip; }
   .dash-search { width: 100%; }
   .acad-settings { grid-template-columns: minmax(0, 1fr); }
   .learn-cert { flex-wrap: wrap; }
+}
+
+
+/* ─── Phone shell: native-feeling layout ───────────────────────────────────
+   Top bar (brand + account) · full-height content · bottom tab bar.
+   The sidebar becomes a bottom sheet opened from the account button. */
+.side-host { display: contents; }
+.tabbar, .nav-me, .side-sheet-head, .sheet-scrim { display: none; }
+
+@media (max-width: 833px) {
+  .app-shell {
+    height: 100dvh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .app-shell > .global-nav {
+    grid-row: 1; height: auto; min-height: 52px; gap: var(--sp-sm);
+    padding: env(safe-area-inset-top) 16px 0; overflow: visible;
+  }
+  .app-shell .nav-tabs, .app-shell .nav-solve, .app-shell .nav-status { display: none; }
+  .app-shell > .workspace { grid-row: 2; min-height: 0; }
+
+  .nav-me {
+    position: relative; display: grid; place-items: center; flex: none; margin-left: auto;
+    width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
+    background: var(--primary); color: #fff; font: 600 15px/1 var(--font-text);
+    transition: transform .16s cubic-bezier(.23, 1, .32, 1);
+  }
+  .nav-me:active { transform: scale(.94); }
+  .nav-me:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .nav-me-dot {
+    position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%;
+    background: var(--ink-48); border: 2px solid #15151a;
+  }
+  .nav-me-dot.is-on { background: var(--green); }
+
+  /* Bottom tab bar */
+  .tabbar {
+    grid-row: 3; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 0 4px env(safe-area-inset-bottom);
+    background: rgba(250, 250, 252, .94);
+    backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-top: 1px solid var(--hairline); z-index: 40;
+  }
+  .tab {
+    min-height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; border: 0; background: transparent; cursor: pointer; color: var(--ink-48);
+    font: 500 11px/1 var(--font-text); letter-spacing: .1px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tab svg { transition: transform .16s cubic-bezier(.23, 1, .32, 1); }
+  .tab:active svg { transform: scale(.88); }
+  .tab[aria-current="page"] { color: var(--primary); }
+  .tab:focus-visible { outline: 2px solid var(--primary-focus); outline-offset: -4px; border-radius: 12px; }
+
+  /* Sidebar as a bottom sheet */
+  .side-host {
+    display: flex; flex-direction: column; position: fixed; left: 0; right: 0; bottom: 0; z-index: 70;
+    max-height: min(86dvh, 720px); background: var(--sidebar-bg);
+    border-radius: 18px 18px 0 0; box-shadow: 0 -16px 48px rgba(0, 0, 0, .2);
+    padding-bottom: env(safe-area-inset-bottom);
+    transform: translateY(104%); visibility: hidden;
+    transition: transform .42s cubic-bezier(.32, .72, 0, 1), visibility 0s linear .42s;
+  }
+  .app-shell.sheet-open .side-host {
+    transform: none; visibility: visible;
+    transition: transform .42s cubic-bezier(.32, .72, 0, 1), visibility 0s;
+  }
+  .side-sheet-head {
+    display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; align-items: center;
+    padding: 10px 12px 6px; position: relative; flex: none;
+  }
+  .side-sheet-grab {
+    position: absolute; top: 7px; left: 50%; width: 36px; height: 5px; margin-left: -18px;
+    border-radius: 3px; background: rgba(60, 60, 67, .3);
+  }
+  .side-sheet-title {
+    grid-column: 2; text-align: center; font: 600 17px/1.3 var(--font-display); color: var(--ink);
+    padding-top: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .side-sheet-close {
+    grid-column: 3; width: 36px; height: 36px; margin-top: 8px; display: grid; place-items: center;
+    border: 0; border-radius: 50%; background: rgba(118, 118, 128, .12); color: var(--ink-80); cursor: pointer;
+  }
+  .side-sheet-close:active { transform: scale(.94); }
+  .app-shell .side-host > .sidebar {
+    display: flex; flex-direction: column; flex-wrap: nowrap; gap: var(--sp-md);
+    max-height: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding: 4px 16px 20px; border: 0; background: transparent;
+  }
+  .sheet-scrim {
+    display: block; position: fixed; inset: 0; z-index: 65; border: 0; padding: 0; cursor: default;
+    background: rgba(0, 0, 0, .34); opacity: 0; pointer-events: none; transition: opacity .3s ease;
+  }
+  .app-shell.sheet-open .sheet-scrim { opacity: 1; pointer-events: auto; }
+
+  /* Upload: one compact row, not a paragraph of file types */
+  .app-shell .upload-zone-hint { display: none; }
+  .app-shell .upload-zone-inner { flex-wrap: nowrap; padding: 8px 16px; min-height: 48px; gap: 10px; overflow-x: auto; scrollbar-width: none; }
+  .app-shell .upload-zone-inner > * { flex-shrink: 0; }
+}
+@media (max-width: 833px) and (prefers-reduced-motion: reduce) {
+  .side-host, .app-shell.sheet-open .side-host, .sheet-scrim { transition: none; }
 }
