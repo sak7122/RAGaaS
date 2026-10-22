@@ -2,7 +2,9 @@ name: Preview (PR)
 
 # Deploys a Firebase Hosting preview channel for every PR against master.
 # Preview URL appears as a comment on the PR and expires after 7 days.
-# Requires: FIREBASE_SERVICE_ACCOUNT secret (same as deploy.yml)
+# Keyless: the org blocks service-account JSON keys, so this signs in with
+# Workload Identity Federation like the production pipeline does.
+# Requires: GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT, FIREBASE_PROJECT_ID
 
 on:
   pull_request:
@@ -14,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write       # Workload Identity Federation
       pull-requests: write  # to post the preview URL comment
 
     steps:
@@ -51,10 +54,26 @@ jobs:
           VITE_FIREBASE_AUTH_DOMAIN:  ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_APP_ID:       ${{ secrets.VITE_FIREBASE_APP_ID }}
 
-      - name: Deploy to Firebase Hosting preview channel
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
         with:
-          repoToken:              ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId:              ${{ secrets.FIREBASE_PROJECT_ID }}
-          expires:                7d
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Firebase Hosting preview channel
+        id: channel
+        run: |
+          npx firebase-tools@latest hosting:channel:deploy "pr-${{ github.event.number }}" \
+            --expires 7d --project "${{ secrets.FIREBASE_PROJECT_ID }}" --non-interactive --json > channel.json
+          url=$(node -e 'const r=require("./channel.json").result||{};const v=Object.values(r)[0]||{};console.log(v.url||"")')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment the preview URL on the PR
+        if: steps.channel.outputs.url != ''
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.channel.outputs.url }}
+        with:
+          script: |
+            const body = `Preview: ${process.env.PREVIEW_URL}\n\nExpires in 7 days. Commit ${context.sha.slice(0, 7)}.`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
