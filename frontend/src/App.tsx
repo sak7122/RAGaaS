@@ -1,7 +1,7 @@
 import { FormEvent, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MotionConfig, motion } from "framer-motion";
-import { LogOut, Sparkles } from "lucide-react";
+import { GraduationCap, Lightbulb, LogOut, MessageCircle, Plug, Sparkles, X } from "lucide-react";
 import { ToastPortal, toast } from "./components/ui";
 import {
   devSignInTenant,
@@ -146,6 +146,14 @@ function App() {
   const [scope, setScope]             = useState<string[]>([]);
   const [members, setMembers]         = useState<Member[]>([]);
   const [view, setView]               = useState<"chat" | "insights" | "academy" | "integrations">("chat");
+  // Phones: the sidebar (workspace, usage, documents, team) lives in a bottom sheet.
+  const [sheetOpen, setSheetOpen]     = useState(false);
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSheetOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sheetOpen]);
   const [conversationId, setConversationIdState] = useState<string | null>(null);
   // In prod we don't know auth state until the listener fires once.
   const [authReady, setAuthReady]     = useState(USE_EMULATOR || DEMO);
@@ -697,8 +705,9 @@ function App() {
   const myRole = USE_EMULATOR || DEMO ? "admin" : members.find((m) => m.uid === currentUid)?.role;
   const canManageDocs = myRole === "admin" || myRole === "uploader";
 
+  const me = (displayName || tenantEmail || "?").trim();
   return (
-    <div className="shell">
+    <div className={`shell app-shell${sheetOpen ? " sheet-open" : ""}`}>
       <ToastPortal />
       {inviteJoined && (
         <div className="invite-banner success" onClick={() => setInviteJoined(null)}>
@@ -773,8 +782,24 @@ function App() {
             <LogOut size={14} />
           </button>
         )}
+        <button type="button" className="nav-me" onClick={() => setSheetOpen(true)}
+                aria-label="Workspace, documents and account" aria-expanded={sheetOpen} aria-controls="side-sheet">
+          <span className={`nav-me-dot${online ? " is-on" : ""}`} aria-hidden="true" />
+          {me.charAt(0).toUpperCase()}
+        </button>
       </nav>
 
+      <button type="button" className="sheet-scrim" aria-hidden={!sheetOpen} tabIndex={-1}
+              onClick={() => setSheetOpen(false)} />
+      <div className="side-host" id="side-sheet" role={sheetOpen ? "dialog" : undefined}
+           aria-modal={sheetOpen || undefined} aria-label="Workspace">
+        <div className="side-sheet-head">
+          <span className="side-sheet-grab" aria-hidden="true" />
+          <span className="side-sheet-title">{status?.tenant_name ?? "Workspace"}</span>
+          <button type="button" className="side-sheet-close" onClick={() => setSheetOpen(false)} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
       <ErrorBoundary>
         <Sidebar
           tenants={USE_EMULATOR ? DEV_TENANTS : []}
@@ -809,6 +834,7 @@ function App() {
           }
         />
       </ErrorBoundary>
+      </div>
 
       <main className="workspace">
         {view === "insights" ? (
@@ -857,6 +883,19 @@ function App() {
           </>
         )}
       </main>
+
+      <nav className="tabbar" aria-label="Sections">
+        {([
+          ["chat", "Ask", MessageCircle], ["insights", "Insights", Lightbulb],
+          ["academy", "Academy", GraduationCap], ["integrations", "Connect", Plug],
+        ] as const).map(([v, label, Icon]) => (
+          <button key={v} type="button" className="tab" aria-current={view === v ? "page" : undefined}
+                  onClick={() => { setView(v); setSheetOpen(false); }}>
+            <Icon size={22} strokeWidth={view === v ? 2.2 : 1.8} aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
