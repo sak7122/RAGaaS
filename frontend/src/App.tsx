@@ -76,6 +76,7 @@ type Status = {
   queries_used: number;
   query_limit: number;
   documents: number;
+  role?: string;          // the role the backend enforces for this account
 };
 
 // Error bodies used to be saved as message text (a list from a 422); coerce on load
@@ -718,7 +719,9 @@ function App() {
     ? `dev-${tenantEmail.replace("@ragaas.local", "").replace("@", "-")}`
     : currentUidRef.current;
   // Admins and uploaders can rebuild document summaries (the backend checks too).
-  const myRole = USE_EMULATOR || DEMO ? "admin" : members.find((m) => m.uid === currentUid)?.role;
+  // Prefer the backend's answer: a workspace owner has no member row to match.
+  const myRole = USE_EMULATOR || DEMO ? "admin"
+    : status?.role ?? members.find((m) => m.uid === currentUid)?.role;
   const canManageDocs = myRole === "admin" || myRole === "uploader";
 
   const me = (displayName || tenantEmail || "?").trim();
