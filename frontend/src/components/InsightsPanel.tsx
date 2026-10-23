@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronRight, Clock, FileText, Mail, MessageSquare, PenLine, RefreshCcw, ThumbsDown, ThumbsUp,
 } from "lucide-react";
 import { CountUp } from "./academyMotion";
+import { Snippet } from "./SearchView";
 import "./insights.css";
 
 export type Insights = {
@@ -51,6 +52,28 @@ function DraftAnswer({ question, api, onDone, onClose }: {
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [hint, setHint] = useState<Suggest | null>(null);
+  const [drafted, setDrafted] = useState(false);
+
+  // What the documents already say about this question, and a draft to edit when
+  // Vertex AI Search can write one from them.
+  useEffect(() => {
+    let live = true;
+    api(`/api/gaps/suggest?question=${encodeURIComponent(question)}`)
+      .then(async (r) => {
+        if (!live || !r.ok) return;
+        const body: Suggest = await r.json();
+        setHint(body);
+        if (body.draft) {
+          setAnswer((cur) => cur || body.draft!);
+          setDrafted(true);
+        }
+      })
+      .catch(() => { /* suggestions are optional */ });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question]);
+
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setError("");
@@ -71,7 +94,24 @@ function DraftAnswer({ question, api, onDone, onClose }: {
     <motion.form className="in-draft" onSubmit={save}
       initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto", transition: { duration: 0.3, ease: EASE } }}
       exit={{ opacity: 0, height: 0, transition: { duration: 0.15 } }}>
-      <label className="in-draft-label" htmlFor="in-draft-a">Write the answer in two or three sentences</label>
+      {hint === null ? (
+        <p className="in-muted in-small in-hint-loading">Looking for related passages in your documents…</p>
+      ) : hint.closest.length > 0 && (
+        <div className="in-closest">
+          <p className="in-draft-label">Closest in your documents</p>
+          <ul>
+            {hint.closest.map((c) => (
+              <li key={`${c.file_name}-${c.page}`}>
+                <span className="in-closest-src">{c.title} · p. {c.page}</span>
+                <span className="in-closest-snip"><Snippet html={c.snippet || c.passage} /></span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <label className="in-draft-label" htmlFor="in-draft-a">
+        {drafted ? "Suggested draft from your documents: check and edit before saving" : "Write the answer in two or three sentences"}
+      </label>
       <textarea id="in-draft-a" className="in-draft-input" rows={3} maxLength={4000} value={answer} autoFocus
         onChange={(e) => setAnswer(e.target.value)}
         placeholder="e.g. Treatment over $600 can be split into three monthly payments, set up at the front desk before treatment." />
@@ -84,6 +124,13 @@ function DraftAnswer({ question, api, onDone, onClose }: {
     </motion.form>
   );
 }
+
+type Suggest = {
+  question: string;
+  closest: { file_name: string; title: string; page: number; snippet: string; passage: string }[];
+  draft: string | null;
+  engine: string;
+};
 
 // ── Weekly trend: answered vs not, stacked; hover for numbers; table view ───
 function Trend({ data }: { data: NonNullable<Insights["trend"]> }) {

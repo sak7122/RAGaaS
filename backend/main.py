@@ -49,6 +49,7 @@ from backend.widget_store import create_widget_key_store
 from backend.slack_store import create_slack_store
 from backend.conversations import create_conversation_store
 from backend.ask_search import create_ask_search
+from backend.site_import import create_site_store, crawl, site_file_name
 from backend.digest import build_digest, create_digest_store
 from backend import billing
 from backend.ingest import SUPPORTED_LABEL, chunk_text, fetch_page
@@ -178,6 +179,7 @@ slack_store          = create_slack_store(config.env)
 whatsapp_store       = create_whatsapp_store(config.env)
 conversation_store   = create_conversation_store(config.env)
 ask_search           = create_ask_search()      # Vertex AI Search Answer API (trial credit), or None
+site_store           = create_site_store(config.env)
 digest_store         = create_digest_store(config.env)
 billing_store        = billing.create_billing_store(config.env)
 planner              = create_planner()
@@ -305,6 +307,10 @@ class DocumentMeta(BaseModel):
     summary: str = ""
     questions: list[str] = Field(default_factory=list)
     profile_source: str = ""    # "generated" (model) | "extractive"
+    # Websites imported as one document: the address and each page's URL (page N = page_urls[N-1]).
+    kind: str | None = None
+    source_url: str | None = None
+    page_urls: list[str] | None = None
 
 
 class MemberOut(BaseModel):
@@ -745,6 +751,7 @@ def document_meta(d: dict) -> DocumentMeta:
         chunks=chunk_count(d),
         uploaded_at=d["uploaded_at"],
         **{k: d[k] for k in PROFILE_FIELDS if d.get(k) is not None},
+        **{k: d[k] for k in ("kind", "source_url", "page_urls") if d.get(k)},
     )
 
 
@@ -848,6 +855,7 @@ def delete_document(
     if not deleted:
         raise HTTPException(status_code=404, detail="Document not found")
     storage.delete(tenant_id, safe_name)
+    site_store.remove(tenant_id, safe_name)
     if ask_search is not None and pages:
         try:
             ask_search.delete_document(tenant_id, safe_name, sorted(pages))
@@ -2067,3 +2075,112 @@ def search_documents(body: SearchRequest, principal: Annotated[Principal, Depend
     data["latency_ms"] = max(int((time.perf_counter() - started) * 1000), 1)
     log.info("search tenant=%s engine=%s results=%d", tenant_id, engine, len(data["results"]))
     return data
+
+
+# ── Routes: import a whole website ───────────────────────────────────────────
+class ImportSiteRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+    max_pages: int = Field(default=40, ge=1, le=40)
+
+
+def import_site(tenant_id: str, url: str, max_pages: int, file_name: str | None = None) -> dict:
+    """Crawl, then index the site as one document whose pages are its web pages."""
+    pages = crawl(url, max_pages)
+    file_name = file_name or safe_filename(site_file_name(pages[0][0]))
+    chunks: list[dict] = []
+    for n, (_u, _t, text) in enumerate(pages, start=1):
+        chunks += [{"page": n, "chunk_index": i, "text": c} for i, c in enumerate(chunk_text(text)) if c.strip()]
+    if not chunks:
+        raise HTTPException(status_code=422, detail="No readable text on that site.")
+    host = urllib.parse.urlsplit(pages[0][0]).netloc
+    profile = index_document(tenant_id, file_name, chunks, uri=url,
+                             extra={"kind": "website", "source_url": url, "page_urls": [u for u, _, _ in pages]})
+    if profile.get("profile_source") != "generated":
+        index_store.update_doc_meta(tenant_id, file_name, {"title": (pages[0][1] or host)[:120]})
+    site_store.save(tenant_id, file_name, url, max_pages)
+    log.info("site imported tenant=%s file=%s pages=%d", tenant_id, file_name, len(pages))
+    return {"file_name": file_name, "pages": len(pages), "title": pages[0][1] or host, "source_url": url}
+
+
+@app.post("/api/import-site")
+def import_site_route(body: ImportSiteRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Add a public website (help centre, FAQ, policies): up to 40 pages, as one document."""
+    require_role(principal, "admin", "uploader")
+    url = body.url.strip()
+    require_documents_room(principal.tenant_id, safe_filename(site_file_name(url)))
+    return import_site(principal.tenant_id, url, body.max_pages)
+
+
+@app.post("/api/documents/{file_name}/refresh")
+def refresh_site(file_name: str, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Re-crawl an imported website so answers follow the live pages."""
+    require_role(principal, "admin", "uploader")
+    safe_name = safe_filename(file_name)
+    doc = next((d for d in index_store.list_docs(principal.tenant_id) if d["file_name"] == safe_name), None)
+    if doc is None or doc.get("kind") != "website" or not doc.get("source_url"):
+        raise HTTPException(status_code=404, detail="Website not found")
+    return import_site(principal.tenant_id, doc["source_url"], len(doc.get("page_urls") or []) or 40, safe_name)
+
+
+SITE_REFRESH_DAYS = 6
+
+
+@app.post("/api/cron/refresh-sites")
+def cron_refresh_sites(x_cron_token: Annotated[str | None, Header()] = None) -> dict:
+    """Weekly re-crawl of every imported website (Cloud Scheduler, CRON_TOKEN)."""
+    expected = os.getenv("CRON_TOKEN", "").strip()
+    if not expected or not x_cron_token or not hmac.compare_digest(x_cron_token, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    done = failed = 0
+    cutoff = datetime.now(timezone.utc).timestamp() - SITE_REFRESH_DAYS * 86400
+    for row in site_store.all():
+        try:
+            if datetime.fromisoformat(row.get("refreshed_at", "1970-01-01T00:00:00+00:00")).timestamp() > cutoff:
+                continue
+            import_site(row["tenant_id"], row["url"], int(row.get("max_pages") or 40), row["file_name"])
+            done += 1
+        except Exception as exc:
+            failed += 1
+            log.warning("site refresh failed tenant=%s file=%s: %s", row.get("tenant_id"), row.get("file_name"), exc)
+    return {"refreshed": done, "failed": failed}
+
+
+# ── Routes: suggestions for closing a knowledge gap ──────────────────────────
+_CITE_MARKER = re.compile(r"\s*\((?:[^()]*?\.(?:pdf|docx|xlsx|csv|pptx|md|txt|html?)[,\s]*p\.?\s*\d+[^()]*)\)", re.I)
+
+
+@app.get("/api/gaps/suggest")
+def suggest_gap_answer(question: str, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """The closest passages the documents have for an unanswered question, and (with
+    Vertex) a draft to edit. Used by Insights → Draft the answer."""
+    require_role(principal, "admin", "uploader")
+    question = question.strip()[:500]
+    if len(question) < 3:
+        raise HTTPException(status_code=422, detail="Question too short")
+    tenant_id = principal.tenant_id
+    titles = doc_titles(tenant_id)
+    closest: list[dict] = []
+    draft: str | None = None
+    engine = RAG_ENGINE_LABEL
+    if ask_search is not None:
+        engine = "Vertex AI Search"
+        try:
+            res = ask_search.search(tenant_id, question, None, page_size=3)
+            closest = [{"file_name": r["file_name"], "page": r["page"], "snippet": r["snippet"],
+                        "passage": r["passage"]} for r in res["results"][:3]]
+        except Exception as exc:
+            log.info("gap suggest search failed: %s", exc)
+        try:
+            a = ask_search.answer(tenant_id, question)
+            if a.grounded:
+                draft = _CITE_MARKER.sub("", a.answer).strip()
+        except Exception as exc:
+            log.info("gap suggest draft failed: %s", exc)
+    if not closest:
+        terms = tokenize(question)
+        closest = [{"file_name": h["file_name"], "page": h.get("page", 1),
+                    "snippet": _highlight(h["text"][:240], terms), "passage": h["text"][:600]}
+                   for h in retrieve_chunks(tenant_id, question, k=3, rewrite=False)]
+    for c in closest:
+        c["title"] = titles.get(c["file_name"], c["file_name"])
+    return {"question": question, "closest": closest, "draft": draft, "engine": engine}

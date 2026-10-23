@@ -161,3 +161,12 @@
   .in-hbar-track { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (prefers-reduced-motion: reduce) { .spin, .in-skel i { animation: none; } }
+
+/* Draft the answer: what the documents already say */
+.in-closest { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--pearl); border: 1px solid var(--hairline); }
+.in-closest ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.in-closest li { display: flex; flex-direction: column; gap: 2px; }
+.in-closest-src { font: 600 12px/1.3 var(--font-text); color: var(--primary); }
+.in-closest-snip { font: 400 13.5px/1.5 "Source Serif 4", Georgia, serif; color: var(--ink-80); }
+.in-closest-snip mark { background: rgba(255, 214, 10, .38); color: inherit; border-radius: 3px; padding: 0 1px; }
+.in-hint-loading { margin: 0; }

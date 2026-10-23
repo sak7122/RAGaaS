@@ -24,7 +24,7 @@ interface UploadBarProps {
   authToken: string;
   disabled: boolean;
   onComplete: () => void;
-  onImportUrl?: (url: string) => Promise<string | null>;   // error text, or null when imported
+  onImportUrl?: (url: string, wholeSite: boolean) => Promise<string | null>;   // error text, or null when imported
 }
 
 function uid(): string {
@@ -125,15 +125,19 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete, onImportUrl
   const [url, setUrl] = useState("");
   const [importing, setImporting] = useState(false);
   const [urlMsg, setUrlMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [wholeSite, setWholeSite] = useState(true);
 
   async function importUrl(e: React.FormEvent) {
     e.preventDefault();
     if (!onImportUrl) return;
     setImporting(true); setUrlMsg(null);
-    const err = await onImportUrl(url.trim());
+    const err = await onImportUrl(url.trim(), wholeSite);
     setImporting(false);
     if (err) setUrlMsg({ ok: false, text: err });
-    else { setUrlMsg({ ok: true, text: "Imported. It's searchable now." }); setUrl(""); onComplete(); }
+    else {
+      setUrlMsg({ ok: true, text: wholeSite ? "Site imported. It's searchable now and re-read weekly." : "Imported. It's searchable now." });
+      setUrl(""); onComplete();
+    }
   }
 
   const active   = queue.filter((i) => i.status === "uploading" || i.status === "queued");
@@ -207,9 +211,13 @@ export function UploadBar({ apiUrl, authToken, disabled, onComplete, onImportUrl
           <motion.form className="up-url" onSubmit={importUrl}
             initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
             <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} disabled={importing}
-              placeholder="https://yourcompany.com/faq" aria-label="Web page address" autoFocus />
+              placeholder="https://yourcompany.com/help" aria-label="Web page address" autoFocus />
+            <span className="up-scope" role="radiogroup" aria-label="What to import">
+              <label><input type="radio" name="up-scope" checked={wholeSite} onChange={() => setWholeSite(true)} /> Whole site (up to 40 pages)</label>
+              <label><input type="radio" name="up-scope" checked={!wholeSite} onChange={() => setWholeSite(false)} /> Just this page</label>
+            </span>
             <button type="submit" className="btn-primary-sm" disabled={importing || url.length < 8}>
-              {importing ? "Importing…" : "Import page"}
+              {importing ? (wholeSite ? "Reading the site…" : "Importing…") : "Import"}
             </button>
             {urlMsg && <span className={`up-url-msg${urlMsg.ok ? " is-ok" : ""}`} role="status">{urlMsg.text}</span>}
           </motion.form>

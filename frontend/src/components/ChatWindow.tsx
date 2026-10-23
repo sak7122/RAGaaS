@@ -5,7 +5,7 @@ import {
   BookOpen, FileText, Library, X, Sparkles, CornerDownRight,
 } from "lucide-react";
 import { StreamingText, toast } from "./ui";
-import { DocumentMeta, docTitle } from "./DocumentList";
+import { DocumentMeta, docTitle, pageUrl } from "./DocumentList";
 import { DocumentPicker, fileType } from "./DocumentPicker";
 import { Feedback, HistoryBar, HistoryProps, SpeakButton, VoiceButton } from "./chatExtras";
 import { AnswerMarkdown, useTypedText } from "./AnswerMarkdown";
@@ -731,6 +731,15 @@ export function ChatWindow({
               </motion.blockquote>
             </AnimatePresence>
             <p className="ak-src-note">Highlighted words are the terms your question was searched with.</p>
+            {(() => {
+              const url = pageUrl(docs.find((d) => d.file_name === current.file_name), current.page);
+              return url ? (
+                <a className="ak-src-web" href={url} target="_blank" rel="noreferrer noopener">
+                  Open the web page <span aria-hidden="true">↗</span>
+                  <span className="ak-src-url">{url.replace(/^https?:\/\//, "")}</span>
+                </a>
+              ) : null;
+            })()}
             {source.list.length > 1 && (
               <div className="ak-src-nav">
                 <button type="button" className="ak-act" onClick={() => step(-1)} aria-label="Previous source"><ChevronLeft size={15} /></button>

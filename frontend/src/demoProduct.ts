@@ -128,6 +128,14 @@ export function demoProduct(path: string, method: string, body: Record<string, u
   if (path.endsWith("/api/insights/digest/subscribe")) { subscribed = !!body?.on; return json({ ok: true, subscribed }); }
   if (path.endsWith("/api/insights/digest/send")) return json({ sent: true });
   if (path.endsWith("/api/gaps/answer")) return json({ ok: true, file_name: "team-answers.md", entries: 1 });
+  if (path.includes("/api/gaps/suggest")) return json({
+    question: "What is the refund policy?", engine: "Vertex AI Search",
+    closest: [{ file_name: "Employee_Handbook.pdf", title: "Employee Handbook", page: 31,
+      snippet: "Customer <b>refunds</b> over $500 need a manager's approval before processing.", passage: "" }],
+    draft: "Refunds over $500 need a manager's approval before they are processed. The handbook doesn't set a refund window, so add one here (for example, within 30 days of purchase).",
+  });
+  if (path.endsWith("/api/import-site")) return json({ file_name: "site-acme-com-help.html", pages: 12, title: "Acme Help Centre", source_url: "https://acme.com/help" });
+  if (/\/api\/documents\/[^/]+\/refresh$/.test(path)) return json({ file_name: "site-acme-com-help.html", pages: 12, title: "Acme Help Centre" });
   if (path.endsWith("/api/import-url")) return json({ file_name: "acme-com-faq.html", chunks: 4, title: "FAQ" });
   if (path.endsWith("/api/billing") && method === "GET") return json({
     enforced: true, plan: PLANS[1], status: "active", renews_at: new Date(Date.now() + 18 * 86400000).toISOString(),
