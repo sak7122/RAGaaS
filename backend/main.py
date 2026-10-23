@@ -280,6 +280,8 @@ class TenantStatus(BaseModel):
     queries_used: int
     query_limit: int
     documents: int
+    # The caller's role as the backend enforces it (owners have no member row).
+    role: str = "viewer"
 
 
 class OnboardingProfile(BaseModel):
@@ -725,6 +727,7 @@ def tenant_status(principal: Annotated[Principal, Depends(principal_from_auth)])
         queries_used=usage_store.get_count(tenant_id),
         query_limit=QUERY_LIMIT,
         documents=len(docs),
+        role=principal.role,
     )
 
 

@@ -115,3 +115,9 @@ def test_gap_suggest_without_vertex_gives_closest_passages(fresh):
     r = client.get("/api/gaps/suggest", headers=A, params={"question": "when are invoices due"}).json()
     assert r["draft"] is None and r["closest"][0]["file_name"] == "billing.txt"
     assert "<b>" in r["closest"][0]["snippet"]
+
+
+def test_status_reports_the_enforced_role():
+    """The app shows admin controls from this, since an owner has no member row."""
+    assert client.get("/api/tenant/status", headers=A).json()["role"] == "admin"
+    assert client.get("/api/tenant/status", headers=VIEWER).json()["role"] == "viewer"
