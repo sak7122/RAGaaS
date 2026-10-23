@@ -140,3 +140,65 @@ def test_not_covered_answer_falls_back():
     data = {"answer": {"answerText": "The provided documents do not contain information about refunds.",
                        "references": [{"chunkInfo": {"content": "x", "documentMetadata": {"structData": {"tenant_id": "t1", "file_name": "a.pdf", "page": 1}}}}]}}
     assert not VertexAskSearch._parse(data, "t1").grounded
+
+# ── profiles written by Vertex + search mode ──────────────────────────────────
+class FakeAskPlus(FakeAsk):
+    def __init__(self, ready=True):
+        super().__init__()
+        self.ready = ready
+
+    def describe(self, tenant_id, file_name, title):
+        if not self.ready:
+            return None
+        return {"title": "Security Handbook", "summary": "How and when staff complete security training.",
+                "questions": ["When is security training due?", "Who runs the training?"]}
+
+    def search(self, tenant_id, query, file_names=None, page_size=10, page_token=None):
+        self.calls.append(("search", tenant_id, query, file_names))
+        return {"results": [{"file_name": "handbook.txt", "page": 1, "snippet": "<b>training</b> is due", "passage": "x"}],
+                "counts": {"handbook.txt": 1}, "total": 1, "next_page_token": None, "corrected_query": None}
+
+
+@pytest.fixture
+def plus(fake, monkeypatch):
+    f = FakeAskPlus()
+    monkeypatch.setattr(main, "ask_search", f)
+    return f
+
+
+def test_upload_profile_upgrades_through_vertex(plus, monkeypatch):
+    plus.ready = False
+    upload("handbook.txt", "Security training is due within five business days.")
+    doc = next(d for d in client.get("/api/documents", headers=A).json() if d["file_name"] == "handbook.txt")
+    assert doc["profile_source"] == "extractive"            # Vertex not ready: extractive for now
+    plus.ready = True
+    monkeypatch.setattr(main, "PROFILE_RETRY_S", 0)
+    doc = next(d for d in client.get("/api/documents", headers=A).json() if d["file_name"] == "handbook.txt")
+    assert doc["profile_source"] == "generated" and doc["title"] == "Security Handbook"
+    assert "When is security training due?" in doc["questions"]
+
+
+def test_profile_falls_back_to_gemini_after_retries(plus, monkeypatch):
+    plus.ready = False
+    monkeypatch.setattr(main, "PROFILE_RETRY_S", 0)
+    upload("handbook.txt", "Security training is due within five business days.")
+    for _ in range(main.PROFILE_MAX_TRIES + 1):
+        client.get("/api/documents", headers=A)
+    stored = next(d for d in main.index_store.list_docs("tenant-a") if d["file_name"] == "handbook.txt")
+    assert not stored.get("profile_pending")
+
+
+def test_search_uses_vertex_and_adds_titles(plus):
+    upload("handbook.txt", "Security training is due within five business days.")
+    r = client.post("/api/search", headers=A, json={"query": "training"}).json()
+    assert r["engine"] == "Vertex AI Search" and r["results"][0]["page"] == 1
+    assert r["documents"][0]["file_name"] == "handbook.txt" and "title" in r["results"][0]
+
+
+def test_search_falls_back_to_keyword_with_escaped_highlights(fake, monkeypatch):
+    monkeypatch.setattr(main, "ask_search", None)
+    upload("handbook.txt", "Security <script>training</script> is due within five business days.")
+    r = client.post("/api/search", headers=A, json={"query": "security training"}).json()
+    assert r["engine"] != "Vertex AI Search" and r["results"]
+    snip = r["results"][0]["snippet"]
+    assert "<script>" not in snip and "<b>Security</b>" in snip

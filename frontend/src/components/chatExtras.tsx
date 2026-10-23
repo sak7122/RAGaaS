@@ -148,7 +148,7 @@ function when(iso: string): string {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-export function HistoryBar({ history, hasMessages }: { history: HistoryProps; hasMessages: boolean }) {
+export function HistoryBar({ history, hasMessages, left }: { history: HistoryProps; hasMessages: boolean; left?: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ConvSummary[] | null>(null);
   useEffect(() => {
@@ -161,6 +161,7 @@ export function HistoryBar({ history, hasMessages }: { history: HistoryProps; ha
   return (
     <>
       <div className="ak-topbar">
+        {left}
         <button type="button" className="ak-top-btn" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-expanded={open}>
           <History size={14} aria-hidden="true" /> <span className="ak-top-label">History</span>
         </button>

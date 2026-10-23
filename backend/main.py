@@ -39,7 +39,8 @@ from backend.firebase_services import (
 from backend.storage import create_storage_backend
 from backend.index_store import chunk_count, create_index_store
 from backend.rag import NOT_FOUND_ANSWER, create_embedder, create_generator
-from backend.doc_profile import SAMPLE_CHUNKS, build_profile, extractive_profile, profile_is_current
+from backend.doc_profile import (SAMPLE_CHUNKS, build_profile, extractive_profile, page_count,
+                                 profile_from_model, profile_is_current)
 from backend.insights import GAP_THRESHOLD, create_insights_store
 from backend.tenant_profile import create_tenant_profile_store, prettify
 from backend.mailer import send_email, send_invite_email, smtp_configured
@@ -497,13 +498,13 @@ def distinct_top(ranked: list[tuple[float, dict]], k: int) -> list[tuple[float, 
 
 def retrieve_chunks(tenant_id: str, query: str, k: int = 6,
                     history: list[dict] | None = None,
-                    scope: set[str] | None = None) -> list[dict]:
+                    scope: set[str] | None = None, rewrite: bool = True) -> list[dict]:
     """Tenant-scoped hybrid retrieval (vector + keyword), shared by the planner.
     Returns ranked chunks: [{file_name, page, chunk_index, text, score}, ...].
     Same scoring as /api/chat; isolation is enforced at index_store level."""
     history = history or []
     search_query = query
-    if hasattr(generator, "rewrite_query"):
+    if rewrite and hasattr(generator, "rewrite_query"):
         try:
             search_query = generator.rewrite_query(query, history)
         except Exception as exc:
@@ -762,10 +763,55 @@ def ensure_profile(tenant_id: str, d: dict) -> dict:
     return {**d, **profile}
 
 
+PROFILE_RETRY_S = 90        # Vertex indexes new pages within a few minutes
+PROFILE_MAX_TRIES = 6       # then Gemini writes it once instead
+PROFILE_UPGRADES_PER_LIST = 3
+
+
+def vertex_profile(tenant_id: str, d: dict) -> dict | None:
+    """A model-written profile from the Answer API, or None if not available yet."""
+    if ask_search is None:
+        return None
+    title = d.get("title") or d["file_name"]
+    try:
+        return profile_from_model(ask_search.describe(tenant_id, d["file_name"], title), title)
+    except Exception as exc:
+        log.info("vertex profile failed tenant=%s file=%s: %s", tenant_id, d["file_name"], exc)
+        return None
+
+
+def upgrade_profile(tenant_id: str, d: dict) -> dict:
+    """Replace a pending extractive profile with Vertex's, retrying while the document
+    indexes; after PROFILE_MAX_TRIES, Gemini writes it so nothing stays half-done."""
+    tries = int(d.get("profile_tries") or 0)
+    if time.time() - float(d.get("profile_tried_at") or 0) < PROFILE_RETRY_S:
+        return d
+    made = vertex_profile(tenant_id, d)
+    if made is None and tries + 1 >= PROFILE_MAX_TRIES:
+        made = build_profile(d["file_name"], index_store.doc_chunks(tenant_id, d["file_name"], SAMPLE_CHUNKS * 4), generator)
+        made.pop("pages", None)
+    fields = ({**made, "profile_pending": None} if made
+              else {"profile_tries": tries + 1, "profile_tried_at": time.time()})
+    try:
+        index_store.update_doc_meta(tenant_id, d["file_name"], fields)
+    except Exception as exc:
+        log.warning("profile upgrade write failed tenant=%s file=%s: %s", tenant_id, d["file_name"], exc)
+    if made:
+        log.info("profile upgraded tenant=%s file=%s source=%s", tenant_id, d["file_name"],
+                 "vertex" if tries + 1 < PROFILE_MAX_TRIES else "gemini")
+    return {**d, **fields}
+
+
 @app.get("/api/documents", response_model=list[DocumentMeta])
 def list_documents(principal: Annotated[Principal, Depends(principal_from_auth)]) -> list[DocumentMeta]:
     tenant_id = principal.tenant_id
-    return [document_meta(ensure_profile(tenant_id, d)) for d in index_store.list_docs(tenant_id)]
+    docs = [ensure_profile(tenant_id, d) for d in index_store.list_docs(tenant_id)]
+    pending = [i for i, d in enumerate(docs) if d.get("profile_pending") == "vertex"][:PROFILE_UPGRADES_PER_LIST]
+    if pending:
+        with ThreadPoolExecutor(max_workers=len(pending)) as pool:
+            for i, d in zip(pending, pool.map(lambda i: upgrade_profile(tenant_id, docs[i]), pending)):
+                docs[i] = d
+    return [document_meta(d) for d in docs]
 
 
 @app.post("/api/documents/{file_name}/profile", response_model=DocumentMeta)
@@ -780,7 +826,10 @@ def regenerate_profile(
     doc = next((d for d in index_store.list_docs(tenant_id) if d["file_name"] == safe_name), None)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    profile = build_profile(safe_name, index_store.doc_chunks(tenant_id, safe_name, SAMPLE_CHUNKS * 4), generator)
+    profile = vertex_profile(tenant_id, doc)
+    if profile is None:
+        profile = build_profile(safe_name, index_store.doc_chunks(tenant_id, safe_name, SAMPLE_CHUNKS * 4), generator)
+    profile["profile_pending"] = None
     index_store.update_doc_meta(tenant_id, safe_name, profile)
     log.info("profile regenerated tenant=%s file=%s source=%s", tenant_id, safe_name, profile["profile_source"])
     return document_meta({**doc, **profile})
@@ -851,6 +900,11 @@ def index_document(tenant_id: str, file_name: str, chunks: list[dict], uri: str 
         log.error("embedding failed for %s (%d chunks): %s; stored without vectors",
                   file_name, len(chunks), exc)
     # Summary + starter questions for the document picker; never fails the upload.
+    # With Vertex, the model-written profile comes from the Answer API (trial credit)
+    # once the pages are indexed (see upgrade_profiles); until then, extractive.
+    if profile is None and ask_search is not None:
+        profile = {**extractive_profile(file_name, chunks), "pages": page_count(chunks),
+                   "profile_pending": "vertex", "profile_tries": 0, "profile_tried_at": 0}
     profile = profile or build_profile(file_name, chunks, generator)
     index_store.upsert_doc(tenant_id, {
         "tenant_id": tenant_id,
@@ -1959,3 +2013,57 @@ async def billing_webhook(request: Request) -> dict:
         billing_store.set_plan(tenant_id, plan or "starter", **fields)
     log.info("billing_webhook tenant=%s event=%s status=%s", tenant_id, event.get("event"), status)
     return {"ok": True}
+
+
+# ── Routes: search mode (passages, not answers) ──────────────────────────────
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    file_names: list[str] | None = Field(default=None, max_length=50)
+    page_token: str | None = Field(default=None, max_length=1000)
+
+
+def _highlight(text: str, terms: set[str]) -> str:
+    """Escape, then wrap query terms in <b> (same shape as Vertex snippets)."""
+    import html as _html
+    out = _html.escape(text)
+    words = sorted((t for t in terms if len(t) >= 3), key=len, reverse=True)
+    if words:
+        out = re.sub(r"\b(" + "|".join(re.escape(w) for w in words) + r")", r"<b>\1</b>", out, flags=re.I)
+    return out
+
+
+@app.post("/api/search")
+def search_documents(body: SearchRequest, principal: Annotated[Principal, Depends(principal_from_auth)]) -> dict:
+    """Find the pages that mention something, ranked, with highlighted snippets.
+    Vertex AI Search (trial credit) when configured; our own retrieval otherwise."""
+    tenant_id = principal.tenant_id
+    scope = resolve_scope(tenant_id, body.file_names)
+    titles = doc_titles(tenant_id)
+    started = time.perf_counter()
+    data, engine = None, "Vertex AI Search"
+    if ask_search is not None:
+        try:
+            data = ask_search.search(tenant_id, body.query.strip(), sorted(scope) if scope else None,
+                                     page_size=10, page_token=body.page_token)
+        except Exception as exc:
+            log.warning("vertex search failed tenant=%s: %s; using keyword search", tenant_id, exc)
+    if data is None:
+        engine = RAG_ENGINE_LABEL
+        terms = tokenize(body.query)
+        hits = retrieve_chunks(tenant_id, body.query, k=10, scope=scope, rewrite=False)
+        counts: dict[str, int] = {}
+        for h in hits:
+            counts[h["file_name"]] = counts.get(h["file_name"], 0) + 1
+        data = {"results": [{"file_name": h["file_name"], "page": h.get("page", 1),
+                             "snippet": _highlight(h["text"][:260], terms), "passage": h["text"][:700]}
+                            for h in hits],
+                "counts": counts, "total": len(hits), "next_page_token": None, "corrected_query": None}
+    for r in data["results"]:
+        r["title"] = titles.get(r["file_name"], r["file_name"])
+    data["documents"] = [{"file_name": f, "title": titles.get(f, f), "count": n}
+                         for f, n in sorted(data.get("counts", {}).items(), key=lambda kv: -kv[1])]
+    data.pop("counts", None)
+    data["engine"] = engine
+    data["latency_ms"] = max(int((time.perf_counter() - started) * 1000), 1)
+    log.info("search tenant=%s engine=%s results=%d", tenant_id, engine, len(data["results"]))
+    return data
