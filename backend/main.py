@@ -12,7 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
@@ -47,6 +47,7 @@ from backend.share_store import create_share_store
 from backend.widget_store import create_widget_key_store
 from backend.slack_store import create_slack_store
 from backend.conversations import create_conversation_store
+from backend.ask_search import create_ask_search
 from backend.digest import build_digest, create_digest_store
 from backend import billing
 from backend.ingest import SUPPORTED_LABEL, chunk_text, fetch_page
@@ -175,6 +176,7 @@ widget_key_store     = create_widget_key_store(config.env)
 slack_store          = create_slack_store(config.env)
 whatsapp_store       = create_whatsapp_store(config.env)
 conversation_store   = create_conversation_store(config.env)
+ask_search           = create_ask_search()      # Vertex AI Search Answer API (trial credit), or None
 digest_store         = create_digest_store(config.env)
 billing_store        = billing.create_billing_store(config.env)
 planner              = create_planner()
@@ -247,6 +249,7 @@ class ChatResponse(BaseModel):
     query_limit: int
     answer_id: str | None = None          # for 👍/👎 feedback; None when not recorded
     conversation_id: str | None = None
+    related: list[str] = Field(default_factory=list)   # suggested next questions
 
 
 class FeedbackRequest(BaseModel):
@@ -538,6 +541,9 @@ class AnswerResult:
     candidates_ranked: int
     latency_ms: int
     started: float = 0.0
+    engine: str = RAG_ENGINE_LABEL
+    session: str | None = None                       # Vertex AI Search session (follow-ups)
+    related: list[str] = field(default_factory=list)  # suggested next questions
 
     @property
     def max_score(self) -> float:
@@ -558,12 +564,69 @@ class AnswerResult:
 
 
 def answer_question(tenant_id: str, question: str, history: list[dict] | None = None,
-                    scope: set[str] | None = None) -> AnswerResult:
+                    scope: set[str] | None = None, session: str | None = None) -> AnswerResult:
     """One question → grounded answer. Shared by chat, Slack and WhatsApp so every
-    channel gets the same retrieval (rewrite, hybrid score, dedupe, scope) and prompt.
+    channel gets the same retrieval and prompt. Vertex AI Search answers first
+    (covered by the trial credit); the Gemini pipeline answers when it can't.
     Callers own quota, auth and recording insights."""
+    v = vertex_answer(tenant_id, question, scope, session)
+    if v is not None:
+        return v
     res = retrieve_for_answer(tenant_id, question, history, scope)
     return res.finish(generator.generate(question, res.chunks, history or []))
+
+
+# Vertex grounds an answer without a score comparable to ours; a grounded answer
+# counts as answered (above GAP_THRESHOLD and the FAQ bar) in Insights.
+VERTEX_SCORE = 0.75
+
+
+def vertex_answer(tenant_id: str, question: str, scope: set[str] | None,
+                  session: str | None) -> AnswerResult | None:
+    """The Answer API's grounded answer, or None to fall back to the Gemini pipeline
+    (not configured, an error, or nothing in the documents answered it, e.g. a
+    document uploaded seconds ago that Vertex is still indexing)."""
+    if ask_search is None:
+        return None
+    started = time.perf_counter()
+    try:
+        a = ask_search.answer(tenant_id, question, sorted(scope) if scope else None, session)
+    except Exception as exc:
+        log.warning("vertex answer failed tenant=%s: %s; using Gemini", tenant_id, exc)
+        return None
+    if not a.grounded:
+        log.info("vertex found no grounded answer tenant=%s; using Gemini", tenant_id)
+        return None
+    seen: set[tuple[str, int]] = set()
+    top: list[tuple[float, dict]] = []
+    for c in a.citations:
+        if (c.file_name, c.page) in seen:
+            continue
+        seen.add((c.file_name, c.page))
+        top.append((VERTEX_SCORE, {"file_name": c.file_name, "page": c.page, "chunk_index": 0, "text": c.excerpt}))
+    docs = index_store.list_docs(tenant_id)
+    searched = sum(chunk_count(d) for d in docs if scope is None or d["file_name"] in scope)
+    res = AnswerResult(answer=a.answer, top=top, query_terms=tokenize(question), chunks_searched=searched,
+                       candidates_ranked=len(top), latency_ms=0, started=started,
+                       engine="Vertex AI Search", session=a.session, related=a.related)
+    return res.finish(a.answer)
+
+
+def conversation_session(principal: Principal, conversation_id: str | None) -> str | None:
+    if not conversation_id or ask_search is None:
+        return None
+    try:
+        return conversation_store.get_meta(principal.tenant_id, principal.uid, conversation_id, "vertex_session")
+    except Exception:
+        return None
+
+
+def remember_session(principal: Principal, conversation_id: str | None, res: AnswerResult) -> None:
+    if conversation_id and res.session:
+        try:
+            conversation_store.set_meta(principal.tenant_id, principal.uid, conversation_id, "vertex_session", res.session)
+        except Exception as exc:
+            log.info("could not save vertex session: %s", exc)
 
 
 def retrieve_for_answer(tenant_id: str, question: str, history: list[dict] | None = None,
@@ -731,10 +794,16 @@ def delete_document(
     require_role(principal, "admin")
     tenant_id = principal.tenant_id
     safe_name = safe_filename(file_name)
+    pages = vertex_pages(tenant_id, safe_name)
     deleted = index_store.delete_doc(tenant_id, safe_name)
     if not deleted:
         raise HTTPException(status_code=404, detail="Document not found")
     storage.delete(tenant_id, safe_name)
+    if ask_search is not None and pages:
+        try:
+            ask_search.delete_document(tenant_id, safe_name, sorted(pages))
+        except Exception as exc:
+            log.warning("vertex delete failed tenant=%s file=%s: %s", tenant_id, safe_name, exc)
     log.info("deleted document tenant=%s file=%s", tenant_id, safe_name)
     return {"ok": True, "file_name": safe_name}
 
@@ -772,6 +841,7 @@ def index_document(tenant_id: str, file_name: str, chunks: list[dict], uri: str 
                    extra: dict | None = None, profile: dict | None = None) -> dict:
     """Embed, profile and store one document's chunks. Shared by uploads, web-page
     imports and the team-answers document. Returns the document profile."""
+    old_pages = vertex_pages(tenant_id, file_name)       # a replacement may have fewer pages
     try:
         vectors = embedder.embed([c["text"] for c in chunks])
         for c, v in zip(chunks, vectors):
@@ -793,7 +863,26 @@ def index_document(tenant_id: str, file_name: str, chunks: list[dict], uri: str 
     })
     log.info("index tenant=%s file=%s chunks=%d profile=%s",
              tenant_id, file_name, len(chunks), profile.get("profile_source"))
+    if ask_search is not None:
+        try:
+            n = ask_search.index_document(tenant_id, file_name, profile.get("title") or file_name, chunks)
+            stale = old_pages - {int(c.get("page", 1)) for c in chunks}
+            if stale:
+                ask_search.delete_document(tenant_id, file_name, sorted(stale))
+            log.info("vertex index tenant=%s file=%s pages=%d removed=%d", tenant_id, file_name, n, len(stale))
+        except Exception as exc:          # Gemini pipeline still answers from Firestore
+            log.error("vertex index failed tenant=%s file=%s: %s", tenant_id, file_name, exc)
     return profile
+
+
+def vertex_pages(tenant_id: str, file_name: str) -> set[int]:
+    """Pages of a document as currently indexed (for Vertex cleanup)."""
+    if ask_search is None:
+        return set()
+    try:
+        return {int(c.get("page", 1)) for c in index_store.doc_chunks(tenant_id, file_name, 10000)}
+    except Exception:
+        return set()
 
 
 # ── Routes: web page import ──────────────────────────────────────────────────
@@ -825,13 +914,15 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
     queries_used = enforce_quota(tenant_id)
     history = [t.model_dump() for t in req.history]
 
-    res = answer_question(tenant_id, req.message, history, scope)
+    res = answer_question(tenant_id, req.message, history, scope,
+                          session=conversation_session(principal, req.conversation_id))
     answer = res.answer
     citations = citations_for(res)
     retrieval = trace_for(res, scope)
     answer_id = record_answer(principal, req.message, res, scope)
     conversation_id = save_turn(principal, req.conversation_id, req.message, scope, answer,
                                 citations, retrieval, answer_id)
+    remember_session(principal, conversation_id, res)
 
     log.info(
         "chat tenant=%s terms=%d searched=%d ranked=%d matches=%d latency_ms=%d queries_used=%d",
@@ -847,6 +938,7 @@ def chat(req: ChatRequest, principal: Annotated[Principal, Depends(principal_fro
         query_limit=QUERY_LIMIT,
         answer_id=answer_id,
         conversation_id=conversation_id,
+        related=res.related,
     )
 
 
@@ -860,7 +952,7 @@ def citations_for(res: AnswerResult) -> list[Citation]:
 
 def trace_for(res: AnswerResult, scope: set[str] | None) -> RetrievalTrace:
     return RetrievalTrace(
-        engine=RAG_ENGINE_LABEL, query_terms=sorted(res.query_terms), chunks_searched=res.chunks_searched,
+        engine=res.engine, query_terms=sorted(res.query_terms), chunks_searched=res.chunks_searched,
         candidates_ranked=res.candidates_ranked, top_k=len(res.top), max_score=res.max_score,
         latency_ms=res.latency_ms, scoped_to=sorted(scope or []),
     )
@@ -907,7 +999,12 @@ def chat_stream(req: ChatRequest, principal: Annotated[Principal, Depends(princi
     scope = resolve_scope(tenant_id, req.file_names)
     queries_used = enforce_quota(tenant_id)
     history = [t.model_dump() for t in req.history]
-    res = retrieve_for_answer(tenant_id, req.message, history, scope)
+    # Vertex answers whole (it doesn't stream); the client types it in. Otherwise the
+    # Gemini pipeline streams as it writes.
+    res = vertex_answer(tenant_id, req.message, scope, conversation_session(principal, req.conversation_id))
+    from_vertex = res is not None
+    if res is None:
+        res = retrieve_for_answer(tenant_id, req.message, history, scope)
     citations = citations_for(res)
 
     def line(obj: dict) -> bytes:
@@ -917,24 +1014,30 @@ def chat_stream(req: ChatRequest, principal: Annotated[Principal, Depends(princi
         yield line({"type": "meta", "citations": [c.model_dump() for c in citations],
                     "retrieval": trace_for(res, scope).model_dump(),
                     "queries_used": queries_used, "query_limit": QUERY_LIMIT})
-        parts: list[str] = []
-        try:
-            for piece in generator.generate_stream(req.message, res.chunks, history):
-                parts.append(piece)
-                yield line({"type": "delta", "text": piece})
-        except Exception as exc:
-            log.warning("chat_stream generation failed tenant=%s: %s", tenant_id, exc)
-            if not parts:
-                parts = ["Sorry, something went wrong writing that answer. Try again."]
-                yield line({"type": "delta", "text": parts[0]})
-        res.finish("".join(parts).strip() or NOT_FOUND_ANSWER)
+        if from_vertex:
+            yield line({"type": "delta", "text": res.answer})
+        else:
+            parts: list[str] = []
+            try:
+                for piece in generator.generate_stream(req.message, res.chunks, history):
+                    parts.append(piece)
+                    yield line({"type": "delta", "text": piece})
+            except Exception as exc:
+                log.warning("chat_stream generation failed tenant=%s: %s", tenant_id, exc)
+                if not parts:
+                    parts = ["Sorry, something went wrong writing that answer. Try again."]
+                    yield line({"type": "delta", "text": parts[0]})
+            res.finish("".join(parts).strip() or NOT_FOUND_ANSWER)
         retrieval = trace_for(res, scope)
         answer_id = record_answer(principal, req.message, res, scope)
         conversation_id = save_turn(principal, req.conversation_id, req.message, scope, res.answer,
                                     citations, retrieval, answer_id)
-        log.info("chat_stream tenant=%s matches=%d latency_ms=%d", tenant_id, len(citations), res.latency_ms)
+        remember_session(principal, conversation_id, res)
+        log.info("chat_stream tenant=%s engine=%s matches=%d latency_ms=%d",
+                 tenant_id, res.engine, len(citations), res.latency_ms)
         yield line({"type": "done", "answer": res.answer, "answer_id": answer_id,
-                    "conversation_id": conversation_id, "retrieval": retrieval.model_dump()})
+                    "conversation_id": conversation_id, "retrieval": retrieval.model_dump(),
+                    "related": res.related})
 
     return StreamingResponse(events(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1266,7 +1369,14 @@ def delete_tenant(principal: Annotated[Principal, Depends(principal_from_auth)])
     require_role(principal, "admin")
     tenant_id = principal.tenant_id
 
-    # Delete all files and index entries for this tenant
+    # Delete all files and index entries for this tenant (Vertex pages first: they
+    # are found through the index).
+    if ask_search is not None:
+        for d in index_store.list_docs(tenant_id):
+            try:
+                ask_search.delete_document(tenant_id, d["file_name"], sorted(vertex_pages(tenant_id, d["file_name"])))
+            except Exception as exc:
+                log.warning("vertex erase failed tenant=%s file=%s: %s", tenant_id, d["file_name"], exc)
     storage.delete_tenant(tenant_id)
     removed = index_store.delete_tenant(tenant_id)
 

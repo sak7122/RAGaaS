@@ -46,6 +46,7 @@ export type ChatMessage = {
   answer_id?: string | null;  // assistant turn: id for 👍/👎 (absent when not recorded)
   helpful?: boolean;          // the asker's rating, once given
   streaming?: boolean;        // assistant turn still being written
+  related?: string[];         // assistant turn: suggested next questions (Vertex AI Search)
 };
 
 interface ChatWindowProps {
@@ -361,13 +362,16 @@ export function ChatWindow({
   const fallbackPlaceholder = picked.length ? `Ask ${scopeText}…` : "Ask anything about your documents…";
   useTypedPlaceholder(inputRef, examples, fallbackPlaceholder, !question && !isLoading && !disabled);
 
-  // Follow-ups: unasked questions from the documents the latest answer cited.
+  // Follow-ups: Vertex AI Search's related questions when it answered, else unasked
+  // questions from the documents the latest answer cited.
   const followUps = useMemo(() => {
     const last = messages[lastAssistant];
     if (!last?.citations?.length || isLoading) return [];
     const asked = new Set(messages.filter((m) => m.role === "user").map((m) => m.text.trim().toLowerCase()));
     const files = [...new Set(last.citations.map((c) => c.file_name))];
-    const qs = files.flatMap((f) => docs.find((d) => d.file_name === f)?.questions ?? []);
+    const qs = last.related?.length
+      ? last.related
+      : files.flatMap((f) => docs.find((d) => d.file_name === f)?.questions ?? []);
     return [...new Set(qs)].filter((q) => !asked.has(q.trim().toLowerCase())).slice(0, 3);
   }, [messages, lastAssistant, docs, isLoading]);
 
