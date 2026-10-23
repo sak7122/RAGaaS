@@ -878,6 +878,15 @@ function App() {
                 workspaceName={status?.tenant_name}
                 onFeedback={handleFeedback}
                 history={history}
+                onSearch={async (query, files, pageToken) => {
+                  try {
+                    const r = await api("/api/search", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ query, file_names: files.length ? files : null, page_token: pageToken ?? null }),
+                    });
+                    return r.ok ? r.json() : null;
+                  } catch { return null; }
+                }}
               />
             </ErrorBoundary>
           </>

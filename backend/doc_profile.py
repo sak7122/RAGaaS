@@ -163,6 +163,20 @@ def profile_is_current(doc: dict) -> bool:
     return doc.get("profile_source") == "generated" or doc.get("profile_version") == PROFILE_VERSION
 
 
+def profile_from_model(raw: object, fallback_title: str) -> dict | None:
+    """Validate a model-written {title, summary, questions}; None if it isn't usable.
+    Shared by Gemini (generator.describe) and Vertex AI Search (ask_search.describe)."""
+    if not isinstance(raw, dict):
+        return None
+    summary = _clip(raw.get("summary") or "", MAX_SUMMARY) if isinstance(raw.get("summary"), str) else ""
+    questions = [q for q in (_clean_question(q) for q in (raw.get("questions") or [])[:MAX_QUESTIONS * 2]) if q]
+    title = _clip(raw["title"], MAX_TITLE) if isinstance(raw.get("title"), str) and raw["title"].strip() else fallback_title
+    if not (summary and questions):
+        return None
+    return {"title": title, "summary": summary, "questions": questions[:MAX_QUESTIONS],
+            "profile_source": "generated", "profile_version": PROFILE_VERSION}
+
+
 def build_profile(file_name: str, chunks: list[dict], generator=None) -> dict:
     """Profile for a document; uses generator.describe when available, else extractive.
     Always returns {title, summary, questions, profile_source, pages}."""
@@ -170,13 +184,9 @@ def build_profile(file_name: str, chunks: list[dict], generator=None) -> dict:
     describe = getattr(generator, "describe", None)
     if callable(describe) and chunks:
         try:
-            raw = describe(base["title"], _sample_text(chunks)) or {}
-            summary = _clip(raw.get("summary") or "", MAX_SUMMARY) if isinstance(raw.get("summary"), str) else ""
-            questions = [q for q in (_clean_question(q) for q in (raw.get("questions") or [])[:MAX_QUESTIONS * 2]) if q]
-            title = _clip(raw["title"], MAX_TITLE) if isinstance(raw.get("title"), str) and raw["title"].strip() else base["title"]
-            if summary and questions:
-                base = {"title": title, "summary": summary, "questions": questions[:MAX_QUESTIONS],
-                        "profile_source": "generated", "profile_version": PROFILE_VERSION}
+            made = profile_from_model(describe(base["title"], _sample_text(chunks)) or {}, base["title"])
+            if made:
+                base = made
         except Exception as exc:  # model down, bad JSON, quota: the extractive profile still ships
             log.warning("profile generation failed for %s (%s); using extractive", file_name, exc)
     base["pages"] = page_count(chunks)

@@ -9,6 +9,7 @@ import { DocumentMeta, docTitle } from "./DocumentList";
 import { DocumentPicker, fileType } from "./DocumentPicker";
 import { Feedback, HistoryBar, HistoryProps, SpeakButton, VoiceButton } from "./chatExtras";
 import { AnswerMarkdown, useTypedText } from "./AnswerMarkdown";
+import { SearchResponse, SearchView } from "./SearchView";
 import "./askChat.css";
 
 // Ask: the signed-in chat. Answers cite document and page; a citation opens the source
@@ -64,6 +65,7 @@ interface ChatWindowProps {
   workspaceName?: string;
   onFeedback?: (index: number, helpful: boolean) => void;
   history?: HistoryProps;
+  onSearch?: (query: string, files: string[], pageToken?: string | null) => Promise<SearchResponse | null>;
 }
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
@@ -336,12 +338,13 @@ function AnswerBody({ text, streaming, docs, onCite }: {
 
 export function ChatWindow({
   messages, question, isLoading, onQuestionChange, onSend, onAsk, onShare, disabled,
-  docs, scope, onScopeChange, workspaceName, onFeedback, history,
+  docs, scope, onScopeChange, workspaceName, onFeedback, history, onSearch,
 }: ChatWindowProps) {
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scopeBtnRef = useRef<HTMLButtonElement>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [mode, setMode] = useState<"ask" | "search">("ask");
   const [source, setSource] = useState<OpenSource | null>(null);
   const [awayFromEnd, setAwayFromEnd] = useState(false);
   const [sentPulse, setSentPulse] = useState(0);
@@ -429,7 +432,26 @@ export function ChatWindow({
 
   return (
     <div className={`chat ak${history ? " has-top" : ""}`}>
-      {history && <HistoryBar history={history} hasMessages={messages.length > 0} />}
+      {history && (
+        <HistoryBar history={history} hasMessages={mode === "ask" && messages.length > 0} left={onSearch && (
+          <div className="ak-mode" role="tablist" aria-label="Mode">
+            {(["ask", "search"] as const).map((m) => (
+              <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => setMode(m)}>
+                {mode === m && <motion.span layoutId="ak-mode-pill" className="ak-mode-pill" transition={{ type: "spring", stiffness: 500, damping: 40 }} />}
+                {m === "ask" ? <BookOpen size={13} aria-hidden="true" /> : <Search size={13} aria-hidden="true" />}
+                <span>{m === "ask" ? "Ask" : "Search"}</span>
+              </button>
+            ))}
+          </div>
+        )} />
+      )}
+      {mode === "search" && onSearch ? (
+        <SearchView search={onSearch} docs={docs} onAskAbout={(q, file) => {
+          setMode("ask");
+          onScopeChange([file]);
+          onAsk(q, [file]);
+        }} />
+      ) : (<>
       <div className="ak-thread" ref={threadRef} aria-live="polite" onScroll={onThreadScroll}>
         <AnimatePresence>
           {empty && (
@@ -660,6 +682,7 @@ export function ChatWindow({
           <p className="ak-hint">Enter to send · Shift + Enter for a new line · <kbd>/</kbd> to focus · ask in any language</p>
         </form>
       </div>
+      </>)}
 
       <AnimatePresence>
         {source && current && (

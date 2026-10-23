@@ -92,6 +92,24 @@ const PLANS = [
 
 export function demoProduct(path: string, method: string, body: Record<string, unknown> | null): Response | null {
   if (path.endsWith("/api/feedback")) return json({ ok: true });
+  if (path.endsWith("/api/search")) {
+    const q = String(body?.query ?? "");
+    const words = q.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+    const mark = (t: string) => words.reduce((s, w) => s.replace(new RegExp(`\\b(${w})`, "gi"), "<b>$1</b>"), t);
+    const all = [
+      { file_name: "Q3_Earnings_Report.pdf", title: "Q3 Earnings Report", page: 4, passage: "Total revenue for the third quarter reached $4.2M, an 18% increase year over year, led by enterprise segment growth." },
+      { file_name: "Employee_Handbook.pdf", title: "Employee Handbook", page: 14, passage: "Security awareness training must be completed within the first five business days of employment." },
+      { file_name: "Product_Roadmap_2026.pdf", title: "Product Roadmap 2026", page: 2, passage: "Q1 2026 focus: multi-region availability, SSO, and the redesigned analytics dashboard." },
+      { file_name: "Employee_Handbook.pdf", title: "Employee Handbook", page: 22, passage: "Full-time employees receive 20 days of paid leave per year, accrued monthly." },
+    ];
+    const picked = (body?.file_names as string[] | null) ?? null;
+    const results = all.filter((r) => (!picked || picked.includes(r.file_name)) && (!words.length || words.some((w) => r.passage.toLowerCase().includes(w))))
+      .map((r) => ({ ...r, snippet: mark(r.passage) }));
+    const counts = new Map<string, { file_name: string; title: string; count: number }>();
+    for (const r of results) counts.set(r.file_name, { file_name: r.file_name, title: r.title, count: (counts.get(r.file_name)?.count ?? 0) + 1 });
+    return json({ results, documents: [...counts.values()], total: results.length, next_page_token: null,
+      corrected_query: null, engine: "Vertex AI Search", latency_ms: 140 });
+  }
   if (path.endsWith("/api/conversations") && method === "GET") {
     return json([...convs.values()].sort((a, b) => b.updated_at.localeCompare(a.updated_at))
       .map((c) => ({ id: c.id, title: c.title, updated_at: c.updated_at, messages: c.messages.length })));
