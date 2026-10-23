@@ -206,6 +206,8 @@ jobs:
           SMTP_USER=${{ secrets.SMTP_USER }},\
           SMTP_FROM=${{ secrets.SMTP_FROM }},\
           ACADEMY_ENGINES=${{ vars.ACADEMY_ENGINES }},\
+          ASK_ENGINE=${{ vars.ASK_ENGINE || 'ragaas-ask' }},\
+          ASK_DATASTORE=${{ vars.ASK_DATASTORE || 'ragaas-ask-kb' }},\
           BILLING_ENFORCED=${{ vars.BILLING_ENFORCED }},\
           RAZORPAY_PLAN_STARTER=${{ vars.RAZORPAY_PLAN_STARTER }},\
           RAZORPAY_PLAN_TEAM=${{ vars.RAZORPAY_PLAN_TEAM }}" \

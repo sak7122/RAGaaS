@@ -36,6 +36,9 @@ class ConversationStore(Protocol):
     def list(self, tenant_id: str, uid: str) -> list[dict]: ...
     def delete(self, tenant_id: str, uid: str, conv_id: str) -> bool: ...
     def mark_feedback(self, tenant_id: str, uid: str, conv_id: str, answer_id: str, helpful: bool) -> None: ...
+    # Small per-conversation state (e.g. the Vertex AI Search session for follow-ups).
+    def get_meta(self, tenant_id: str, uid: str, conv_id: str, key: str) -> str | None: ...
+    def set_meta(self, tenant_id: str, uid: str, conv_id: str, key: str, value: str) -> None: ...
 
 
 class MemoryConversationStore:
@@ -67,7 +70,7 @@ class MemoryConversationStore:
     def get(self, tenant_id: str, uid: str, conv_id: str) -> dict | None:
         with self._lock:
             c = self._mine(tenant_id, uid, conv_id)
-            return {k: v for k, v in c.items() if k not in ("tenant_id", "uid")} if c else None
+            return {k: v for k, v in c.items() if k not in ("tenant_id", "uid", "meta")} if c else None
 
     def list(self, tenant_id: str, uid: str) -> list[dict]:
         with self._lock:
@@ -89,6 +92,16 @@ class MemoryConversationStore:
             for m in (c or {}).get("messages", []):
                 if m.get("answer_id") == answer_id:
                     m["helpful"] = helpful
+
+    def get_meta(self, tenant_id: str, uid: str, conv_id: str, key: str) -> str | None:
+        c = self._mine(tenant_id, uid, conv_id)
+        return (c or {}).get("meta", {}).get(key)
+
+    def set_meta(self, tenant_id: str, uid: str, conv_id: str, key: str, value: str) -> None:
+        with self._lock:
+            c = self._mine(tenant_id, uid, conv_id)
+            if c is not None:
+                c.setdefault("meta", {})[key] = value
 
 
 class FirestoreConversationStore:
@@ -156,6 +169,15 @@ class FirestoreConversationStore:
             if m.get("answer_id") == answer_id:
                 m["helpful"] = helpful
         ref.update({"messages": msgs})
+
+    def get_meta(self, tenant_id: str, uid: str, conv_id: str, key: str) -> str | None:
+        ref, d = self._mine(tenant_id, uid, conv_id)
+        return (d or {}).get("meta", {}).get(key) if ref else None
+
+    def set_meta(self, tenant_id: str, uid: str, conv_id: str, key: str, value: str) -> None:
+        ref, _ = self._mine(tenant_id, uid, conv_id)
+        if ref:
+            ref.update({f"meta.{key}": value})
 
 
 def create_conversation_store(env: str) -> ConversationStore:

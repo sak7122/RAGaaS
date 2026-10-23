@@ -450,7 +450,7 @@ function App() {
             // Nothing cited inside the picked documents: offer to ask the whole workspace.
             const scopedMiss = files.length > 0 && (citations ?? []).length === 0 ? text : undefined;
             show({ role: "assistant", text: ev.answer, citations, retrieval: ev.retrieval ?? retrieval,
-                   timestamp: Date.now(), answer_id: ev.answer_id, scopedMiss });
+                   timestamp: Date.now(), answer_id: ev.answer_id, scopedMiss, related: ev.related ?? [] });
             if (ev.conversation_id) setConversationId(ev.conversation_id);
           }
         }
