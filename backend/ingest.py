@@ -306,9 +306,10 @@ def _public_host(host: str) -> bool:
     return True
 
 
-def fetch_page(url: str, opener=None) -> tuple[str, str, str]:
-    """(final_url, title, text) for a public web page. Follows up to 3 redirects,
-    re-checking each hop."""
+def fetch_raw(url: str, opener=None, accept: str = "text/html,*/*",
+              allow=("html", "text", "xml")) -> tuple[str, str, bytes]:
+    """(final_url, content_type, body) for a public address. Follows up to 3
+    redirects, re-checking every hop against private and metadata addresses."""
     import urllib.request
 
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -322,7 +323,7 @@ def fetch_page(url: str, opener=None) -> tuple[str, str, str]:
             raise HTTPException(status_code=400, detail="Enter a full web address starting with https://")
         if not _public_host(parts.hostname):
             raise HTTPException(status_code=400, detail="That address isn't a public web page.")
-        req = urllib.request.Request(url, headers={"User-Agent": "RAGaaS-importer/1.0", "Accept": "text/html,*/*"})
+        req = urllib.request.Request(url, headers={"User-Agent": "RAGaaS-importer/1.0", "Accept": accept})
         try:
             resp = opener.open(req, timeout=15)
         except urllib.error.HTTPError as e:
@@ -331,16 +332,22 @@ def fetch_page(url: str, opener=None) -> tuple[str, str, str]:
                 continue
             raise HTTPException(status_code=400, detail=f"The page answered with an error ({e.code}).")
         except Exception as exc:
-            log.info("fetch_page failed %s: %s", url, exc)
+            log.info("fetch failed %s: %s", url, exc)
             raise HTTPException(status_code=400, detail="Couldn't reach that page.")
         ctype = resp.headers.get("Content-Type", "")
-        if "html" not in ctype and "text" not in ctype:
+        if not any(a in ctype for a in allow):
             raise HTTPException(status_code=400, detail="That address isn't a web page. Upload files directly instead.")
         body = resp.read(MAX_PAGE_BYTES + 1)
         if len(body) > MAX_PAGE_BYTES:
             raise HTTPException(status_code=413, detail="That page is too large to import.")
-        title, text = html_to_text(_decode(body))
-        if not text.strip():
-            raise HTTPException(status_code=422, detail="No readable text on that page.")
-        return url, title, text
+        return url, ctype, body
     raise HTTPException(status_code=400, detail="That page redirects too many times.")
+
+
+def fetch_page(url: str, opener=None) -> tuple[str, str, str]:
+    """(final_url, title, text) for a public web page."""
+    final, _ctype, body = fetch_raw(url, opener, allow=("html", "text"))
+    title, text = html_to_text(_decode(body))
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="No readable text on that page.")
+    return final, title, text

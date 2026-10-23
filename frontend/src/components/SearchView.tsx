@@ -23,7 +23,7 @@ const ENTITIES: Record<string, string> = { "&quot;": '"', "&#39;": "'", "&amp;":
 const decode = (s: string) => s.replace(/&(quot|#39|amp|lt|gt|nbsp);/g, (m) => ENTITIES[m] ?? m);
 
 /** Snippets mark matches with <b>; render only that, as <mark>, and nothing else as HTML. */
-function Snippet({ html }: { html: string }) {
+export function Snippet({ html }: { html: string }) {
   const clean = html.replace(/<(?!\/?b>)[^>]*>/gi, "");
   const parts = clean.split(/(<b>|<\/b>)/i);
   const out: ReactNode[] = [];

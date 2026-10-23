@@ -262,9 +262,9 @@ function App() {
     } catch { /* rating is best effort */ }
   }
 
-  async function handleImportUrl(url: string): Promise<string | null> {
+  async function handleImportUrl(url: string, wholeSite = false): Promise<string | null> {
     try {
-      const r = await api("/api/import-url", {
+      const r = await api(wholeSite ? "/api/import-site" : "/api/import-url", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
       });
       if (r.ok) return null;
@@ -309,6 +309,22 @@ function App() {
       toast("Summary and questions refreshed");
     } catch (err) {
       toast(err instanceof Error ? err.message : "Could not refresh the summary", "error");
+    } finally {
+      setRefreshing(null);
+    }
+  }
+
+  // Re-read an imported website so answers follow its live pages.
+  async function handleRefreshSite(fileName: string) {
+    setRefreshing(fileName);
+    try {
+      const res = await api(`/api/documents/${encodeURIComponent(fileName)}/refresh`, { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(errorText(body, res.status));
+      toast(`Site re-read: ${body.pages} pages`);
+      refreshStatus();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not re-read the site", "error");
     } finally {
       setRefreshing(null);
     }
@@ -821,6 +837,7 @@ function App() {
                 deleting={deleting}
                 canManage={canManageDocs}
                 onRefreshProfile={handleRefreshProfile}
+                onRefreshSite={handleRefreshSite}
                 refreshing={refreshing}
               />
               <MembersPanel
