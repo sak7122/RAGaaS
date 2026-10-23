@@ -242,3 +242,11 @@ def test_unlink_command(fresh):
     hook(wa_payload("unlink"))
     assert main.whatsapp_store.get_link(PHONE) is None
     assert client.get("/api/integrations/whatsapp/link", headers=ADMIN_A).json()["linked"] is False
+
+
+def test_whatsapp_turns_math_into_plain_text():
+    assert wa.to_whatsapp("For every FD $A \\rightarrow B$, **A** is a super key.") == "For every FD A → B, *A* is a super key."
+
+def test_whatsapp_leaves_money_alone():
+    assert wa.to_whatsapp("Crowns cost $450 and cleaning $80.") == "Crowns cost $450 and cleaning $80."
+    assert wa.to_whatsapp(r"Growth is $\frac{a}{b}$ yearly.") == "Growth is (a)/(b) yearly."

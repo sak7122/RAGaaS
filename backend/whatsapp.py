@@ -89,9 +89,30 @@ def parse(payload: dict) -> list[Incoming]:
     return out
 
 
+_TEX = {r"\rightarrow": "→", r"\to": "→", r"\leftarrow": "←", r"\Rightarrow": "⇒", r"\leftrightarrow": "↔",
+        r"\leq": "≤", r"\le": "≤", r"\geq": "≥", r"\ge": "≥", r"\neq": "≠", r"\times": "×", r"\cdot": "·",
+        r"\approx": "≈", r"\in": "∈", r"\cup": "∪", r"\cap": "∩", r"\subseteq": "⊆", r"\infty": "∞", r"\%": "%"}
+
+
+def _plain_math(t: str) -> str:
+    """WhatsApp can't render LaTeX: "$A \\rightarrow B$" → "A → B"."""
+    def conv(m: re.Match) -> str:
+        x = m.group(1) or m.group(2) or ""
+        if not re.search(r"[\\^_{}]", x):
+            return m.group(0)          # "$5 and $10" is money, not maths
+        x = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", x)
+        x = re.sub(r"\\text\{([^{}]*)\}", r"\1", x)
+        for k in sorted(_TEX, key=len, reverse=True):
+            x = x.replace(k, _TEX[k])
+        x = re.sub(r"\\[a-zA-Z]+", "", x).replace("{", "").replace("}", "")
+        return re.sub(r"\s+", " ", x).strip()
+    return re.sub(r"\$\$([^$]+)\$\$|\$([^$\n]+)\$", conv, t)
+
+
 def to_whatsapp(md: str) -> str:
     """Markdown from the model → WhatsApp formatting (*bold*, _italic_, • bullets)."""
     t = md.replace("\r\n", "\n")
+    t = _plain_math(t)
     t = re.sub(r"^#{1,6}\s*(.+)$", r"*\1*", t, flags=re.M)               # headings → bold line
     t = re.sub(r"\*\*(.+?)\*\*", r"*\1*", t)                              # **bold** → *bold*
     t = re.sub(r"__(.+?)__", r"_\1_", t)
