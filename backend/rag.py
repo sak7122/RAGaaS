@@ -202,7 +202,14 @@ class GeminiGenerator:
         "(types, options, rules, differences) add a compact table; **bold** the key terms; write "
         "formulas and notation in LaTeX between $ signs (for example $A \\rightarrow B$). Put each "
         "citation right after the sentence it supports. For long answers, end with a one-line "
-        "**Key takeaway**. Never add facts that are not in the excerpts."
+        "**Key takeaway**. Never add facts that are not in the excerpts. "
+        "Facts must come from the excerpts, but reasoning does not have to: when the question asks "
+        "you to work something out from what the documents say (solve or outline an approach to a "
+        "problem or exercise they describe, write or explain an algorithm, calculate, prove, apply a "
+        "rule to a case, compare options, plan steps), do that reasoning yourself, using the "
+        "excerpts as the given facts and your general knowledge for the method. Cite what comes "
+        "from the documents and say plainly which parts are your own reasoning. Never reply that "
+        "you cannot find it just because the documents don't spell the answer out."
     )
 
     def __init__(self, model: str, project: str, location: str,
@@ -342,9 +349,14 @@ class GeminiGenerator:
             yield self.generate(question, chunks, history)
 
     _TRANSCRIBE_SYSTEM = (
-        "Transcribe all readable text in this file exactly, in reading order. Keep headings, "
-        "lists and table rows (one row per line, cells separated by ' | '). Do not summarise, "
-        "translate or add anything. If there is no readable text, return nothing."
+        "Transcribe everything readable in this file exactly, in reading order: printed text, "
+        "handwriting, stamps, signatures' printed names, labels inside diagrams and charts, and text "
+        "inside photos or screenshots. Write mathematical notation in LaTeX between $ signs and keep "
+        "superscripts and subscripts (for example $1 \\le N \\le 10^9$, $x_i^2$). Keep headings, "
+        "lists and table rows (one row per line, cells separated by ' | '). For a figure, diagram or "
+        "chart add one line '[Figure: what it shows]', with a chart's values. Write [illegible] for "
+        "words you cannot read. Do not summarise, translate or add anything else. If there is "
+        "nothing readable at all, return nothing."
     )
 
     def transcribe(self, data: bytes, mime_type: str) -> str:

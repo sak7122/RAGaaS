@@ -3,6 +3,12 @@
 Text formats are parsed locally. Scans, photos and recordings are read by the
 generator's `transcribe(bytes, mime)` (Gemini in production), so a scanned PDF, a
 phone photo of a notice or a voice memo all become searchable text.
+
+Nothing readable should be lost to how a file was made: every PDF page is checked
+for images (scans, handwriting, photos, diagrams), math or symbol fonts whose text
+extracts badly, garbled text and near-empty text, and each such page is read by
+the transcriber on its own. Form fields and comments are kept; images inside Word
+and PowerPoint files are read too.
 """
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ import logging
 import re
 import socket
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 from typing import Callable
 
@@ -25,6 +32,19 @@ ZIP_MAGIC = b"PK\x03\x04"
 # Gemini reads inline files up to ~20 MB per request.
 MAX_TRANSCRIBE_BYTES = 19 * 1024 * 1024
 ROWS_PER_CHUNK = 25
+
+# Page-level OCR for PDFs (see _pdf_page_reasons).
+MIN_PAGE_CHARS = 40          # less selectable text than this: likely a scan or an image page
+MIN_IMAGE_SIDE = 64          # images smaller than this (px) are bullets and rules, not content
+MAX_OCR_PAGES = 300          # per document; beyond this, local text only (logged)
+OCR_WORKERS = 8
+# Fonts whose glyphs extract out of order or without superscripts (10^9 → "10 … 9").
+MATH_FONT = re.compile(r"KaTeX|MathJax|CMMI|CMSY|CMEX|MSBM|MSAM|CambriaMath|Cambria-Math|STIX|XITS|"
+                       r"LatinModernMath|lmmath|Asana|TeXGyre\w*Math|Euclid|MT-?Extra", re.I)
+# Embedded images in Word / PowerPoint worth reading (Gemini's supported image types).
+EMBEDDED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+MIN_EMBEDDED_IMAGE_BYTES = 4 * 1024
+MAX_EMBEDDED_IMAGES = 40
 
 IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp",
                "heic": "image/heic", "heif": "image/heif"}
@@ -89,6 +109,31 @@ def _transcribe(content: bytes, mime: str, transcribe: Transcriber, what: str) -
         raise HTTPException(status_code=502, detail=f"Couldn't read this {what}. Try again, or upload a clearer file.")
 
 
+def _clean_transcript(text: str) -> str:
+    return PAGE_MARK.sub("", text or "").strip()
+
+
+def _read_images(images: list[tuple[bytes, str]], transcribe: Transcriber) -> list[str]:
+    """Text read from embedded images (Word/PowerPoint); unreadable ones are skipped."""
+    if transcribe is None:
+        return []
+    picked = [(b, m) for b, m in images
+              if m in EMBEDDED_IMAGE_TYPES and MIN_EMBEDDED_IMAGE_BYTES <= len(b) <= MAX_TRANSCRIBE_BYTES]
+    if len(picked) > MAX_EMBEDDED_IMAGES:
+        log.warning("reading %d of %d embedded images", MAX_EMBEDDED_IMAGES, len(picked))
+        picked = picked[:MAX_EMBEDDED_IMAGES]
+
+    def one(item: tuple[bytes, str]) -> str:
+        try:
+            return _clean_transcript(transcribe(item[0], item[1]))
+        except Exception as exc:
+            log.warning("embedded image unreadable (%s): %s", item[1], exc)
+            return ""
+
+    with ThreadPoolExecutor(max_workers=OCR_WORKERS) as pool:
+        return [t for t in pool.map(one, picked) if t]
+
+
 def _scanned_pdf(content: bytes, transcribe: Transcriber) -> list[dict]:
     text = _transcribe(content, "application/pdf", transcribe, "scanned PDF")
     # The reader is asked to mark pages as "=== Page N ===".
@@ -101,33 +146,168 @@ def _scanned_pdf(content: bytes, transcribe: Transcriber) -> list[dict]:
 
 
 # ── Local parsers ─────────────────────────────────────────────────────────────
+def _images_on(resources, depth: int = 0) -> int:
+    """Count content-sized images on a page, including inside form XObjects."""
+    try:
+        xobjects = (resources or {}).get("/XObject")
+        xobjects = xobjects.get_object() if xobjects is not None else {}
+    except Exception:
+        return 0
+    n = 0
+    for ref in xobjects.values():
+        try:
+            x = ref.get_object()
+            sub = x.get("/Subtype")
+            if sub == "/Image":
+                if int(x.get("/Width", 0)) >= MIN_IMAGE_SIDE and int(x.get("/Height", 0)) >= MIN_IMAGE_SIDE:
+                    n += 1
+            elif sub == "/Form" and depth < 3:
+                n += _images_on(x.get("/Resources"), depth + 1)
+        except Exception:
+            continue
+    return n
+
+
+def _fonts_on(resources) -> list[str]:
+    try:
+        fonts = (resources or {}).get("/Font")
+        fonts = fonts.get_object() if fonts is not None else {}
+        return [str(f.get_object().get("/BaseFont", "")) for f in fonts.values()]
+    except Exception:
+        return []
+
+
+def _pdf_page_reasons(page, text: str) -> list[str]:
+    """Why a page's selectable text may not be everything on it (empty = it is)."""
+    reasons = []
+    try:
+        resources = page.get("/Resources")
+        resources = resources.get_object() if resources is not None else {}
+    except Exception:
+        resources = {}
+    if len(text) < MIN_PAGE_CHARS:
+        reasons.append("little or no selectable text")
+    if _images_on(resources):
+        reasons.append("images")
+    if any(MATH_FONT.search(f) for f in _fonts_on(resources)):
+        reasons.append("math or symbol fonts")
+    if text and (text.count("\ufffd") + len(re.findall(r"\(cid:\d+\)", text))) > max(3, len(text) // 50):
+        reasons.append("garbled text")
+    return reasons
+
+
+def _pdf_extras(page) -> str:
+    """Filled-in form fields and comments: pypdf's text extraction skips both."""
+    out = []
+    try:
+        annots = page.get("/Annots") or []
+        for ref in annots.get_object() if hasattr(annots, "get_object") else annots:
+            a = ref.get_object()
+            value, name = a.get("/V"), a.get("/T")
+            if value not in (None, "") and not hasattr(value, "get_object"):
+                value = str(value).lstrip("/")
+                if value and value not in ("Off",):
+                    out.append(f"{name}: {value}" if name else value)
+            contents = a.get("/Contents")
+            if contents and a.get("/Subtype") in ("/Text", "/FreeText", "/Highlight", "/Underline", "/StrikeOut", "/Square", "/Circle"):
+                out.append(f"Comment: {contents}")
+    except Exception as exc:
+        log.info("could not read annotations: %s", exc)
+    return "\n".join(out)
+
+
+def _one_page_pdf(reader, index: int) -> bytes:
+    from pypdf import PdfWriter
+    w = PdfWriter()
+    w.add_page(reader.pages[index])
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
 def _pdf(content: bytes, transcribe: Transcriber) -> list[dict]:
     from pypdf import PdfReader
     try:
         reader = PdfReader(io.BytesIO(content))
-        pages = [(n, (p.extract_text() or "").strip()) for n, p in enumerate(reader.pages, start=1)]
+        texts = [(p.extract_text() or "").strip() for p in reader.pages]
+        extras = [_pdf_extras(p) for p in reader.pages]
+        reasons = [_pdf_page_reasons(p, t) for p, t in zip(reader.pages, texts)]
     except Exception as exc:
         log.warning("PDF parse failed: %s", exc)
         raise HTTPException(status_code=400, detail="Could not parse PDF: the file may be corrupted or encrypted.")
+
+    flagged = [i for i, r in enumerate(reasons) if r]
+    if flagged and transcribe is None and not any(texts):
+        _transcribe(content, "application/pdf", None, "scanned PDF")      # raises the "needs the AI reader" error
+    read: dict[int, str] = {}
+    if flagged and transcribe is not None:
+        if len(flagged) > MAX_OCR_PAGES:
+            log.warning("PDF has %d pages to read; reading the first %d", len(flagged), MAX_OCR_PAGES)
+            flagged = flagged[:MAX_OCR_PAGES]
+
+        def one(i: int) -> tuple[int, str]:
+            try:
+                page_pdf = _one_page_pdf(reader, i)
+                if len(page_pdf) > MAX_TRANSCRIBE_BYTES:
+                    log.warning("PDF page %d is too large to read (%d bytes)", i + 1, len(page_pdf))
+                    return i, ""
+                return i, _clean_transcript(transcribe(page_pdf, "application/pdf"))
+            except Exception as exc:
+                log.warning("PDF page %d unreadable (%s): %s", i + 1, ", ".join(reasons[i]), exc)
+                return i, ""
+
+        with ThreadPoolExecutor(max_workers=OCR_WORKERS) as pool:
+            read = {i: t for i, t in pool.map(one, flagged) if t}
+        log.info("PDF pages read by the AI reader: %d of %d (%s)", len(read), len(reader.pages),
+                 "; ".join(f"p{i + 1}: {', '.join(reasons[i])}" for i in flagged[:12]))
+
+    pages = []
+    for i, local in enumerate(texts):
+        ocr = read.get(i, "")
+        if ocr and len(ocr) >= 0.6 * len(local):
+            text = ocr                       # the reader saw everything the text layer has, and more
+        elif ocr:
+            text = f"{local}\n\n[Also on this page]\n{ocr}"
+        else:
+            text = local
+        if extras[i]:
+            text = f"{text}\n\n{extras[i]}".strip()
+        pages.append((i + 1, text))
     result = _pages_to_chunks(pages)
     if result:
         return result
-    # No selectable text: a scanned or image-only PDF. Read it with OCR.
-    return _scanned_pdf(content, transcribe)
+    if transcribe is not None:
+        # Per-page reading found nothing (or the file couldn't be split): read it whole.
+        return _scanned_pdf(content, transcribe)
+    return _need(result, "PDF")
 
 
-def _docx(content: bytes) -> list[dict]:
+def _docx(content: bytes, transcribe: Transcriber = None) -> list[dict]:
     from docx import Document
+    from docx.oxml.ns import qn
     try:
         doc = Document(io.BytesIO(content))
         parts = [p.text for p in doc.paragraphs]
         for table in doc.tables:
             for row in table.rows:
                 parts.append(" | ".join(cell.text for cell in row.cells))
+        # Text boxes and shapes (w:txbxContent) aren't in doc.paragraphs.
+        for box in doc.element.body.iter(qn("w:txbxContent")):
+            parts.append(" ".join(t.text or "" for t in box.iter(qn("w:t"))))
+        seen: set[str] = set()
+        for section in doc.sections:
+            for part in (section.header, section.footer):
+                text = "\n".join(p.text for p in part.paragraphs if p.text.strip())
+                if text and text not in seen:
+                    seen.add(text)
+                    parts.append(text)
+        images = [(rel.target_part.blob, rel.target_part.content_type)
+                  for rel in doc.part.rels.values() if "image" in rel.reltype and not rel.is_external]
     except Exception as exc:
         log.warning("DOCX parse failed: %s", exc)
         raise HTTPException(status_code=400, detail=(
             "Could not parse Word document: the file may be corrupted. Legacy .doc isn't supported; save as .docx."))
+    parts += [f"[Image] {t}" for t in _read_images(images, transcribe)]
     full_text = "\n".join(t for t in parts if t and t.strip())
     return _need(_pages_to_chunks([(1, full_text)]), "Word document")
 
@@ -191,22 +371,37 @@ def _csv(content: bytes) -> list[dict]:
     return _need(_rows_to_chunks(1, "", rows), "CSV file")
 
 
-def _pptx(content: bytes) -> list[dict]:
+def _pptx(content: bytes, transcribe: Transcriber = None) -> list[dict]:
     from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
     try:
         deck = Presentation(io.BytesIO(content))
     except Exception as exc:
         log.warning("PPTX parse failed: %s", exc)
         raise HTTPException(status_code=400, detail="Could not open this PowerPoint file. Save it as .pptx and try again.")
-    pages = []
-    for n, slide in enumerate(deck.slides, start=1):
-        parts = []
-        for shape in slide.shapes:
+
+    def walk(shapes, parts: list[str], images: list[tuple[bytes, str]]) -> None:
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                walk(shape.shapes, parts, images)
+                continue
             if shape.has_text_frame:
                 parts.append(shape.text_frame.text)
             if getattr(shape, "has_table", False) and shape.has_table:
                 for row in shape.table.rows:
                     parts.append(" | ".join(c.text for c in row.cells))
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    images.append((shape.image.blob, shape.image.content_type))
+                except Exception:
+                    pass
+
+    pages = []
+    for n, slide in enumerate(deck.slides, start=1):
+        parts: list[str] = []
+        images: list[tuple[bytes, str]] = []
+        walk(slide.shapes, parts, images)
+        parts += [f"[Image] {t}" for t in _read_images(images, transcribe)]
         if slide.has_notes_slide:
             parts.append(slide.notes_slide.notes_text_frame.text)
         pages.append((n, "\n".join(p for p in parts if p.strip())))
@@ -267,11 +462,11 @@ def extract_chunks(content: bytes, file_name: str, transcribe: Transcriber = Non
         return _pdf(content, transcribe)
     if content[:4] == ZIP_MAGIC:
         if ext == "docx":
-            return _docx(content)
+            return _docx(content, transcribe)
         if ext == "xlsx":
             return _xlsx(content)
         if ext == "pptx":
-            return _pptx(content)
+            return _pptx(content, transcribe)
     elif ext == "csv":
         return _csv(content)
     elif ext in TEXT_TYPES:
